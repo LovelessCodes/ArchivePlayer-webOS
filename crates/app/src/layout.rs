@@ -58,13 +58,18 @@ pub struct HomeLayout {
 pub fn home(continue_len: usize, recent_len: usize) -> HomeLayout {
     let continue_len = continue_len.min(4);
     let recent_len = recent_len.min(4);
+    let (recent_y, card_y) = if continue_len == 0 {
+        (570, 604)
+    } else {
+        (854, 888)
+    };
     HomeLayout {
         hero: Rect::new(Theme::CONTENT_X, 124, Theme::CONTENT_W, 408),
         hero_poster: Rect::new(1368, 154, 424, 348),
         play: Rect::new(324, 438, 196, 62),
         details: Rect::new(540, 438, 196, 62),
         section_continue: Rect::new(Theme::CONTENT_X, 570, 420, 44),
-        section_recent: Rect::new(Theme::CONTENT_X, 854, 420, 44),
+        section_recent: Rect::new(Theme::CONTENT_X, recent_y, 420, 44),
         continue_cards: (0..continue_len)
             .map(|index| {
                 Rect::new(
@@ -79,7 +84,7 @@ pub fn home(continue_len: usize, recent_len: usize) -> HomeLayout {
             .map(|index| {
                 Rect::new(
                     Theme::CONTENT_X + index as i32 * (370 + CARD_GAP),
-                    888,
+                    card_y,
                     370,
                     148,
                 )

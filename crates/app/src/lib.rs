@@ -1,15 +1,17 @@
 //! Native ArchivePlayer client for LG webOS.
 //!
-//! This crate owns the startup state machine, demo catalogue, screen state, and
+//! This crate owns the startup state machine, catalogue and live worker, screen state, and
 //! software-rendered 10-foot UI. The host simulator drives it with SDL2; the
 //! webOS shell can drive the same state with its ARMv7 SDL2 build.
 
-pub mod demo;
+pub mod catalog;
 pub mod layout;
+pub mod live;
 pub mod pairing;
 pub mod render;
 pub mod state;
 
+pub use live::{LiveClient, LiveCommand, LiveEvent, PairingView};
 pub use pairing::{PairingFlow, PairingPoll};
 pub use state::{Action, App, FocusTarget};
 
@@ -134,6 +136,25 @@ mod ui_tests {
                 .count()
                 >= 2
         );
+    }
+
+    #[test]
+    fn category_chips_filter_the_catalogue() {
+        let mut app = App::demo();
+        app.category = 3; // Horror
+        let horror = app.visible_items();
+        assert!(!horror.is_empty());
+        assert!(horror.iter().all(|index| app
+            .library
+            .item(*index)
+            .genres
+            .iter()
+            .any(|genre| genre == "Horror")));
+        app.category = 1; // Movies
+        assert!(app
+            .visible_items()
+            .iter()
+            .all(|index| !app.library.item(*index).is_series()));
     }
 
     #[test]

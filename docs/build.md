@@ -10,6 +10,7 @@ video.
 sudo apt-get install libsdl2-dev      # Debian/Ubuntu
 cargo run -p archiveplayer-webos-sim
 cargo run -p archiveplayer-webos-sim -- --all docs/screenshots
+cargo run -p archiveplayer-webos-sim -- --server http://127.0.0.1:8080
 
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings

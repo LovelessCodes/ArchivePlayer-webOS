@@ -7,9 +7,9 @@ use archiveplayer_tv_gfx::{Canvas, Color, FontWeight, Rect, TextStyle};
 use archiveplayer_tv_ui::theme::Theme;
 use archiveplayer_tv_ui::Screen;
 
-use crate::demo::{DemoEpisode, DemoItem};
+use crate::catalog::{EpisodeView, MediaItem};
 use crate::layout;
-use crate::state::{Action, App, NAV_SCREENS};
+use crate::state::{Action, App, PairingStatus, NAV_SCREENS};
 
 const WHITE: Color = Color::WHITE;
 const PANEL_SHADOW: Color = Color::rgba(0, 0, 0, 110);
@@ -35,12 +35,12 @@ pub fn render(app: &App, canvas: &mut Canvas) {
         }
         Screen::Library => {
             draw_sidebar(app, canvas);
-            draw_topbar(
-                app,
-                "Library",
-                "12 titles  ·  6 shelves  ·  sorted by recently added",
-                canvas,
+            let subtitle = format!(
+                "{} titles  ·  {} shelves  ·  sorted by recently added",
+                app.library.items.len(),
+                app.library.categories.len()
             );
+            draw_topbar(app, "Library", &subtitle, canvas);
             draw_library(app, canvas);
         }
         Screen::Search => {
@@ -144,27 +144,52 @@ fn draw_sidebar(app: &App, canvas: &mut Canvas) {
     canvas.fill_round_rect(pill, 14.0, Theme::PANEL);
     canvas.stroke_round_rect(pill, 14.0, 1.0, Theme::BORDER_SOFT);
     canvas.fill_circle((pill.x + 22, pill.y + 24), 5.0, Theme::SUCCESS);
+    let server_name = canvas.clipped(
+        &app.server_name,
+        112.0,
+        TextStyle::new(14.0, Theme::TEXT).medium(),
+    );
     text(
         canvas,
-        "Living room",
+        &server_name,
         pill.x + 38,
         pill.y + 30,
         14.0,
         Theme::TEXT,
         FontWeight::Medium,
     );
+    let host = app
+        .server_url
+        .split("://")
+        .nth(1)
+        .unwrap_or(&app.server_url)
+        .trim_end_matches('/');
+    let host = canvas.clipped(
+        &format!(
+            "{} · {}",
+            if app.server_lan { "LAN" } else { "Remote" },
+            host
+        ),
+        138.0,
+        TextStyle::new(11.0, Theme::MUTED),
+    );
     text(
         canvas,
-        "LAN · 192.168.1.20",
+        &host,
         pill.x + 38,
         pill.y + 50,
         11.0,
         Theme::MUTED,
         FontWeight::Regular,
     );
+    let version = if app.server_version.is_empty() {
+        "API".to_string()
+    } else {
+        format!("v{}", app.server_version)
+    };
     text(
         canvas,
-        "v0.5.0",
+        &version,
         pill.x + 150,
         pill.y + 30,
         10.0,
@@ -218,9 +243,14 @@ fn draw_topbar(app: &App, title: &str, subtitle: &str, canvas: &mut Canvas) {
     canvas.fill_round_rect(status, 20.0, Theme::PANEL);
     canvas.stroke_round_rect(status, 20.0, 1.0, Theme::BORDER_SOFT);
     canvas.fill_circle((status.x + 22, status.y + 20), 4.0, Theme::SUCCESS);
+    let name = canvas.clipped(
+        &app.server_name,
+        108.0,
+        TextStyle::new(13.0, Theme::TEXT_SOFT).medium(),
+    );
     text(
         canvas,
-        "Living room",
+        &name,
         status.x + 36,
         status.y + 25,
         13.0,
@@ -229,8 +259,12 @@ fn draw_topbar(app: &App, title: &str, subtitle: &str, canvas: &mut Canvas) {
     );
     text(
         canvas,
-        "·  LAN",
-        status.x + 126,
+        if app.server_lan {
+            "·  LAN"
+        } else {
+            "·  Remote"
+        },
+        status.x + 150,
         status.y + 25,
         12.0,
         Theme::MUTED,
@@ -238,13 +272,59 @@ fn draw_topbar(app: &App, title: &str, subtitle: &str, canvas: &mut Canvas) {
     );
 }
 
+fn draw_empty_library(app: &App, canvas: &mut Canvas, title: &str) {
+    let card = Rect::new(Theme::CONTENT_X, 180, Theme::CONTENT_W, 420);
+    canvas.fill_round_rect(card, 24.0, Theme::PANEL);
+    canvas.stroke_round_rect(card, 24.0, 1.0, Theme::BORDER_SOFT);
+    draw_icon(
+        canvas,
+        "library",
+        Rect::new(card.center().0 - 34, card.y + 104, 68, 68),
+        Theme::PRIMARY_LIGHT,
+    );
+    text_centered(
+        canvas,
+        title,
+        card.center().0,
+        card.y + 230,
+        38.0,
+        Theme::TEXT,
+        FontWeight::SemiBold,
+    );
+    text_centered(
+        canvas,
+        "Add films or series in the ArchivePlayer web app, then refresh this screen.",
+        card.center().0,
+        card.y + 278,
+        17.0,
+        Theme::MUTED,
+        FontWeight::Regular,
+    );
+    text_centered(
+        canvas,
+        &format!("Server: {}", app.server_name),
+        card.center().0,
+        card.y + 326,
+        14.0,
+        Theme::DIM,
+        FontWeight::Regular,
+    );
+}
+
 fn draw_home(app: &App, canvas: &mut Canvas) {
+    if app.library.items.is_empty() {
+        draw_empty_library(app, canvas, "Your library is empty");
+        return;
+    }
     let continue_items = app.library.continue_watching();
     let recent_items = app.library.recently_added();
     let home = layout::home(continue_items.len(), recent_items.len());
-    let featured = app.library.featured();
+    let featured = app
+        .library
+        .featured()
+        .expect("the empty catalogue returned above");
 
-    draw_hero(canvas, home.hero, home.hero_poster, featured);
+    draw_hero(canvas, home.hero, home.hero_poster, featured, app.live);
     draw_button(
         canvas,
         home.play,
@@ -266,22 +346,24 @@ fn draw_home(app: &App, canvas: &mut Canvas) {
         app.is_focused(home.details),
     );
 
-    section_header(
-        canvas,
-        "Continue watching",
-        "View all",
-        home.section_continue,
-    );
-    for (rect, index) in home.continue_cards.iter().zip(&continue_items) {
-        let item = app.library.item(*index);
-        draw_landscape(
+    if !continue_items.is_empty() {
+        section_header(
             canvas,
-            *rect,
-            item,
-            item.progress_fraction(),
-            true,
-            app.is_focused(*rect),
+            "Continue watching",
+            "View all",
+            home.section_continue,
         );
+        for (rect, index) in home.continue_cards.iter().zip(&continue_items) {
+            let item = app.library.item(*index);
+            draw_landscape(
+                canvas,
+                *rect,
+                item,
+                item.progress_fraction(),
+                true,
+                app.is_focused(*rect),
+            );
+        }
     }
 
     section_header(
@@ -321,7 +403,7 @@ fn draw_library(app: &App, canvas: &mut Canvas) {
                 Theme::BORDER_SOFT
             },
         );
-        let label = app.library.categories[index];
+        let label = &app.library.categories[index];
         let color = if selected {
             Theme::PRIMARY_LIGHT
         } else if focused {
@@ -377,10 +459,10 @@ fn draw_library(app: &App, canvas: &mut Canvas) {
     }
 }
 
-fn draw_library_card(canvas: &mut Canvas, rect: Rect, item: &DemoItem, focused: bool) {
+fn draw_library_card(canvas: &mut Canvas, rect: Rect, item: &MediaItem, focused: bool) {
     draw_poster(canvas, rect, item, false);
     let title = canvas.clipped(
-        item.title,
+        &item.title,
         rect.width as f32,
         TextStyle::new(18.0, Theme::TEXT).semibold(),
     );
@@ -399,11 +481,7 @@ fn draw_library_card(canvas: &mut Canvas, rect: Rect, item: &DemoItem, focused: 
     );
     text(
         canvas,
-        &format!(
-            "{}  ·  {}",
-            item.year,
-            item.genres.first().copied().unwrap_or("Feature")
-        ),
+        &item.card_meta(),
         rect.x,
         rect.bottom() + 47,
         13.0,
@@ -423,7 +501,8 @@ fn draw_library_card(canvas: &mut Canvas, rect: Rect, item: &DemoItem, focused: 
 
 fn draw_search(app: &App, canvas: &mut Canvas) {
     let results = app.search_results();
-    let search = layout::search(4, results.len());
+    let suggestions = app.search_suggestions();
+    let search = layout::search(suggestions.len(), results.len());
 
     let focused = app.is_focused(search.input);
     let editing = app.search_editing;
@@ -520,7 +599,7 @@ fn draw_search(app: &App, canvas: &mut Canvas) {
 
     for (index, rect) in search.chips.iter().enumerate() {
         let focused = app.is_focused(*rect);
-        let suggestion = crate::state::SEARCH_SUGGESTIONS[index];
+        let suggestion = &suggestions[index];
         let selected = app.search_query.eq_ignore_ascii_case(suggestion);
         let fill = if selected {
             Theme::PRIMARY.with_alpha(30)
@@ -672,43 +751,64 @@ fn draw_detail(app: &App, canvas: &mut Canvas) {
 
     text(
         canvas,
-        "ARCHIVE PICTURES  ·  FEATURED",
+        if app.live {
+            "YOUR LIBRARY  ·  DETAILS"
+        } else {
+            "ARCHIVE PICTURES  ·  FEATURED"
+        },
         324,
         166,
         12.0,
         item.accent,
         FontWeight::SemiBold,
     );
-    text(
-        canvas,
-        item.title,
-        324,
-        238,
-        56.0,
-        Theme::TEXT,
-        FontWeight::SemiBold,
+    let title_style = TextStyle::new(56.0, Theme::TEXT).semibold();
+    let measured = canvas.measure_text(&item.title, title_style);
+    let title_size = if measured > 940.0 { 42.0 } else { 56.0 };
+    let title_lines = canvas.wrapped(
+        &item.title,
+        940.0,
+        2,
+        TextStyle::new(title_size, Theme::TEXT).semibold(),
     );
+    let title_base = if title_lines.len() > 1 { 218 } else { 238 };
+    for (index, line) in title_lines.iter().enumerate() {
+        text(
+            canvas,
+            line,
+            324,
+            title_base + index as i32 * 48,
+            title_size,
+            Theme::TEXT,
+            FontWeight::SemiBold,
+        );
+    }
+    let meta_y = if title_lines.len() > 1 { 318 } else { 282 };
     text(
         canvas,
         &item.meta_label(),
         324,
-        282,
+        meta_y,
         16.0,
         Theme::TEXT_SOFT,
         FontWeight::Regular,
     );
-    text(
-        canvas,
-        item.tagline,
-        324,
-        322,
-        16.0,
-        item.accent,
-        FontWeight::Medium,
-    );
+    let mut next_y = meta_y + 40;
+    if !item.tagline.is_empty() {
+        text(
+            canvas,
+            &item.tagline,
+            324,
+            next_y,
+            16.0,
+            item.accent,
+            FontWeight::Medium,
+        );
+        next_y += 48;
+    }
 
     let lines = canvas.wrapped(
-        item.description,
+        &item.description,
         880.0,
         3,
         TextStyle::new(17.0, Theme::TEXT_SOFT),
@@ -718,7 +818,7 @@ fn draw_detail(app: &App, canvas: &mut Canvas) {
             canvas,
             line,
             324,
-            370 + index as i32 * 27,
+            next_y + index as i32 * 27,
             17.0,
             Theme::TEXT_SOFT,
             FontWeight::Regular,
@@ -737,6 +837,33 @@ fn draw_detail(app: &App, canvas: &mut Canvas) {
         true,
         app.is_focused(detail.play),
     );
+    if let Some(plan) = &item.playback_plan {
+        if !plan.compatible {
+            let reason = plan
+                .reason
+                .as_deref()
+                .unwrap_or("This file needs a decoder this TV does not provide.");
+            text(
+                canvas,
+                "NOT PLAYABLE ON THIS TV",
+                324,
+                586,
+                12.0,
+                Theme::DANGER,
+                FontWeight::SemiBold,
+            );
+            let warning = canvas.clipped(reason, 900.0, TextStyle::new(14.0, Theme::TEXT_SOFT));
+            text(
+                canvas,
+                &warning,
+                324,
+                610,
+                14.0,
+                Theme::TEXT_SOFT,
+                FontWeight::Regular,
+            );
+        }
+    }
 
     // Poster with a soft drop shadow.
     canvas.fill_round_rect(detail.poster.offset(0, 14), 18.0, PANEL_SHADOW);
@@ -774,19 +901,54 @@ fn draw_detail(app: &App, canvas: &mut Canvas) {
             Theme::TEXT,
             FontWeight::SemiBold,
         );
-        let info = [
-            (
-                "RUNTIME",
-                format!("{} minutes", item.runtime_minutes),
-                "Uncut",
-            ),
-            (
-                "RATING",
-                format!("★ {:.1} / 10", item.rating),
-                "Community score",
-            ),
-            ("SOURCE", "Archive.org".to_string(), "Public domain"),
-        ];
+        let info = if item.runtime_minutes > 0 && item.rating > 0.0 {
+            vec![
+                (
+                    "RUNTIME",
+                    format!("{} minutes", item.runtime_minutes),
+                    "Uncut".to_string(),
+                ),
+                (
+                    "RATING",
+                    format!("★ {:.1} / 10", item.rating),
+                    "Community score".to_string(),
+                ),
+                (
+                    "SOURCE",
+                    "Archive.org".to_string(),
+                    "Public domain".to_string(),
+                ),
+            ]
+        } else {
+            let plan = item.playback_plan.as_ref();
+            vec![
+                (
+                    "PLAYBACK",
+                    plan.map(|plan| {
+                        format!(
+                            "{} · {}",
+                            plan.video_codec
+                                .as_deref()
+                                .unwrap_or("Video")
+                                .to_uppercase(),
+                            plan.container.as_deref().unwrap_or("file").to_uppercase()
+                        )
+                    })
+                    .unwrap_or_else(|| "Server selected".into()),
+                    "Optimized for webOS".to_string(),
+                ),
+                (
+                    "FILES",
+                    format!("{} available", item.file_count.max(1)),
+                    "Archive.org source".to_string(),
+                ),
+                (
+                    "SOURCE",
+                    "Archive.org".to_string(),
+                    "Public domain".to_string(),
+                ),
+            ]
+        };
         for (index, rect) in detail.info_cards.iter().enumerate() {
             let (label, value, note) = &info[index];
             canvas.fill_round_rect(*rect, 16.0, Theme::PANEL);
@@ -825,8 +987,8 @@ fn draw_detail(app: &App, canvas: &mut Canvas) {
 fn draw_episode_card(
     canvas: &mut Canvas,
     rect: Rect,
-    item: &DemoItem,
-    episode: &DemoEpisode,
+    item: &MediaItem,
+    episode: &EpisodeView,
     focused: bool,
 ) {
     canvas.fill_round_rect(
@@ -879,7 +1041,11 @@ fn draw_episode_card(
     );
     text(
         canvas,
-        &format!("E{:02}  ·  {} min", episode.number, episode.runtime_minutes),
+        &if episode.runtime_minutes > 0 {
+            format!("E{:02}  ·  {} min", episode.number, episode.runtime_minutes)
+        } else {
+            format!("E{:02}", episode.number)
+        },
         rect.x + 154,
         rect.y + 34,
         11.0,
@@ -887,7 +1053,7 @@ fn draw_episode_card(
         FontWeight::SemiBold,
     );
     let title = canvas.clipped(
-        episode.title,
+        &episode.title,
         (rect.width - 166) as f32,
         TextStyle::new(18.0, Theme::TEXT).semibold(),
     );
@@ -901,7 +1067,7 @@ fn draw_episode_card(
         FontWeight::SemiBold,
     );
     let description = canvas.clipped(
-        episode.description,
+        &episode.description,
         (rect.width - 166) as f32,
         TextStyle::new(12.0, Theme::MUTED),
     );
@@ -927,56 +1093,125 @@ fn draw_episode_card(
 
 fn draw_settings(app: &App, canvas: &mut Canvas) {
     let settings = layout::settings();
+    let server_lines = vec![
+        app.server_url.clone(),
+        if app.server_version.is_empty() {
+            "ArchivePlayer  ·  API version pending".into()
+        } else {
+            format!("ArchivePlayer {}  ·  API v1", app.server_version)
+        },
+    ];
     draw_settings_card(
         canvas,
         settings.cards[0],
         "SERVER",
-        "Connected",
-        "Living room",
-        &["http://192.168.1.20:8080", "ArchivePlayer 0.5.0  ·  API v1"],
-        Some(("LAN", Theme::SUCCESS)),
+        if app.paired { "Connected" } else { "Pairing" },
+        &app.server_name,
+        &server_lines,
+        Some((
+            if app.server_lan { "LAN" } else { "REMOTE" },
+            if app.server_lan {
+                Theme::SUCCESS
+            } else {
+                Theme::AMBER
+            },
+        )),
     );
+
+    let selected = app.library.item(app.selected);
+    let plan = selected.playback_plan.as_ref();
+    let playback_title = plan
+        .map(|plan| {
+            format!(
+                "{} · {}",
+                plan.video_codec
+                    .as_deref()
+                    .unwrap_or("Video")
+                    .to_uppercase(),
+                plan.container.as_deref().unwrap_or("file").to_uppercase()
+            )
+        })
+        .unwrap_or_else(|| {
+            if app.live {
+                "Server selected".into()
+            } else {
+                "H.264 · MP4".into()
+            }
+        });
+    let playback_lines = vec![
+        plan.and_then(|plan| match (plan.width, plan.height) {
+            (Some(width), Some(height)) => Some(format!("{width}×{height}  ·  no transcoding")),
+            _ => None,
+        })
+        .unwrap_or_else(|| {
+            if app.live {
+                "Profile selected by the server".into()
+            } else {
+                "Up to 1080p  ·  no transcoding".into()
+            }
+        }),
+        "Plays with the native webOS media pipeline".into(),
+    ];
     draw_settings_card(
         canvas,
         settings.cards[1],
         "PLAYBACK",
-        "Direct play",
-        "H.264 · MP4",
-        &[
-            "Up to 1080p  ·  no transcoding",
-            "Progress saved every 15 seconds",
-        ],
+        if plan.is_some() || !app.live {
+            "Direct play"
+        } else {
+            "Waiting for a title"
+        },
+        &playback_title,
+        &playback_lines,
         Some(("webOS 5+", Theme::AMBER)),
     );
+
+    let device_lines = vec![
+        format!(
+            "Device: webOS TV  ·  {}",
+            if app.server_lan { "LAN" } else { "remote" }
+        ),
+        "Token stored in private app data".into(),
+    ];
     draw_settings_card(
         canvas,
         settings.cards[2],
         "THIS DEVICE",
-        "Paired",
-        "Living room TV",
-        &[
-            "Paired 12 Nov 2026  ·  webOS",
-            "Device ID 8f2c…a91d  ·  4 scopes",
-        ],
-        Some(("Active", Theme::SUCCESS)),
+        if app.paired { "Paired" } else { "Not paired" },
+        "ArchivePlayer TV",
+        &device_lines,
+        Some((
+            if app.paired { "Active" } else { "Pairing" },
+            if app.paired {
+                Theme::SUCCESS
+            } else {
+                Theme::AMBER
+            },
+        )),
     );
+
+    let about_lines = vec![
+        "Based on ArchivePlayer by Jeppe Kjeldal".to_string(),
+        "Not affiliated with LG or the Internet Archive".to_string(),
+    ];
     draw_settings_card(
         canvas,
         settings.cards[3],
         "ABOUT",
         "MIT licensed",
         "ArchivePlayer 0.1.0",
-        &[
-            "Based on ArchivePlayer by Jeppe Kjeldal",
-            "Not affiliated with LG or the Internet Archive",
-        ],
+        &about_lines,
         Some(("v0.1.0", Theme::DIM)),
     );
 
     draw_button(
         canvas,
         settings.pair,
-        "Pair this TV",
+        if app.paired {
+            "Re-pair this TV"
+        } else {
+            "Pair this TV"
+        },
         "",
         false,
         app.is_focused(settings.pair),
@@ -997,7 +1232,7 @@ fn draw_settings_card(
     label: &str,
     badge: &str,
     title: &str,
-    lines: &[&str],
+    lines: &[String],
     pill: Option<(&str, Color)>,
 ) {
     canvas.fill_round_rect(rect, 18.0, Theme::PANEL);
@@ -1118,32 +1353,54 @@ fn draw_pair(app: &App, canvas: &mut Canvas) {
 
     canvas.fill_round_rect(pair.code, 16.0, Theme::BG_SOFT);
     canvas.stroke_round_rect(pair.code, 16.0, 1.0, Theme::BORDER);
+    let code = if app.pairing_code.is_empty() {
+        "····–····"
+    } else {
+        &app.pairing_code
+    };
     text_centered(
         canvas,
-        "ABCD–EFGH",
+        code,
         pair.code.center().0,
         pair.code.y + 54,
         36.0,
         Theme::TEXT,
         FontWeight::SemiBold,
     );
+    let expires = if app.pairing_seconds_left > 0 {
+        format!(
+            "Code expires in {}:{:02}",
+            app.pairing_seconds_left / 60,
+            app.pairing_seconds_left % 60
+        )
+    } else {
+        "Request a new code when this one expires".to_string()
+    };
     text(
         canvas,
-        "Code expires in 9:42",
+        &expires,
         pair.code.x,
         pair.code.bottom() + 26,
         12.0,
         Theme::MUTED,
         FontWeight::Regular,
     );
+    let (status, status_color) = match app.pairing_status {
+        PairingStatus::Connecting => ("Contacting the server…", Theme::AMBER),
+        PairingStatus::Waiting => ("Waiting for approval…", Theme::AMBER),
+        PairingStatus::Approved => ("Approved — loading your library", Theme::SUCCESS),
+        PairingStatus::Denied => ("Pairing declined — request a new code", Theme::DANGER),
+        PairingStatus::Expired => ("Code expired — request a new code", Theme::DANGER),
+        PairingStatus::Error => ("Could not reach the server", Theme::DANGER),
+    };
     canvas.fill_circle(
         (pair.code.x + 7, pair.code.bottom() + 60),
         4.0,
-        Theme::AMBER,
+        status_color,
     );
     text(
         canvas,
-        "Waiting for approval…",
+        status,
         pair.code.x + 22,
         pair.code.bottom() + 64,
         13.0,
@@ -1159,11 +1416,9 @@ fn draw_pair(app: &App, canvas: &mut Canvas) {
         pair.qr.height + 48,
     );
     canvas.fill_round_rect(qr_card, 18.0, WHITE);
-    draw_qr(
-        canvas,
-        pair.qr,
-        "https://archiveplayer.local/activate?code=ABCD-EFGH",
-    );
+    if !app.pairing_complete_uri.is_empty() {
+        draw_qr(canvas, pair.qr, &app.pairing_complete_uri);
+    }
     text_centered(
         canvas,
         "Scan with your phone",
@@ -1173,9 +1428,18 @@ fn draw_pair(app: &App, canvas: &mut Canvas) {
         Theme::TEXT_SOFT,
         FontWeight::Medium,
     );
+    let short_uri = app
+        .pairing_uri
+        .split("://")
+        .nth(1)
+        .unwrap_or(&app.pairing_uri);
     text_centered(
         canvas,
-        "archiveplayer.local/activate",
+        if short_uri.is_empty() {
+            "waiting for the server address"
+        } else {
+            short_uri
+        },
         qr_card.center().0,
         qr_card.bottom() + 60,
         12.0,
@@ -1186,7 +1450,11 @@ fn draw_pair(app: &App, canvas: &mut Canvas) {
     draw_button(
         canvas,
         pair.simulate,
-        "Simulate approval",
+        if app.live {
+            "Get a new code"
+        } else {
+            "Simulate approval"
+        },
         "",
         true,
         app.is_focused(pair.simulate),
@@ -1201,7 +1469,11 @@ fn draw_pair(app: &App, canvas: &mut Canvas) {
     );
     text(
         canvas,
-        "Demo mode: OK completes pairing and stores a local token.",
+        if app.live {
+            "The TV stores a revocable bearer token; no password is entered on the TV."
+        } else {
+            "Demo mode: OK completes pairing and stores a local token."
+        },
         pair.simulate.x,
         pair.simulate.bottom() + 34,
         11.0,
@@ -1270,7 +1542,7 @@ fn draw_player(app: &App, canvas: &mut Canvas) {
     );
     text(
         canvas,
-        item.title,
+        &item.title,
         280,
         146,
         42.0,
@@ -1491,7 +1763,7 @@ fn draw_toast(app: &App, canvas: &mut Canvas) {
     );
 }
 
-fn draw_hero(canvas: &mut Canvas, rect: Rect, poster: Rect, item: &DemoItem) {
+fn draw_hero(canvas: &mut Canvas, rect: Rect, poster: Rect, item: &MediaItem, live: bool) {
     canvas.fill_round_vertical_gradient(rect, 24.0, item.palette.0, item.palette.1);
     canvas.fill_circle(
         (rect.right() - 260, rect.y + 120),
@@ -1516,33 +1788,50 @@ fn draw_hero(canvas: &mut Canvas, rect: Rect, poster: Rect, item: &DemoItem) {
 
     text(
         canvas,
-        "FEATURED  ·  PUBLIC DOMAIN",
+        if live {
+            "FEATURED  ·  FROM YOUR LIBRARY"
+        } else {
+            "FEATURED  ·  PUBLIC DOMAIN"
+        },
         324,
         178,
         12.0,
         Theme::PRIMARY_LIGHT,
         FontWeight::SemiBold,
     );
-    text(
-        canvas,
-        item.title,
-        324,
-        248,
-        54.0,
-        WHITE,
-        FontWeight::SemiBold,
+    let title_style = TextStyle::new(46.0, WHITE).semibold();
+    let title_width = canvas.measure_text(&item.title, title_style);
+    let title_size = if title_width > 900.0 { 38.0 } else { 54.0 };
+    let title_lines = canvas.wrapped(
+        &item.title,
+        900.0,
+        2,
+        TextStyle::new(title_size, WHITE).semibold(),
     );
+    let title_base = if title_lines.len() > 1 { 222 } else { 246 };
+    for (index, line) in title_lines.iter().enumerate() {
+        text(
+            canvas,
+            line,
+            324,
+            title_base + index as i32 * 48,
+            title_size,
+            WHITE,
+            FontWeight::SemiBold,
+        );
+    }
+    let meta_y = if title_lines.len() > 1 { 322 } else { 292 };
     text(
         canvas,
         &item.meta_label(),
         324,
-        288,
+        meta_y,
         16.0,
         WHITE.with_alpha(185),
         FontWeight::Regular,
     );
     let description = canvas.wrapped(
-        item.description,
+        &item.description,
         880.0,
         2,
         TextStyle::new(17.0, WHITE.with_alpha(205)),
@@ -1552,7 +1841,7 @@ fn draw_hero(canvas: &mut Canvas, rect: Rect, poster: Rect, item: &DemoItem) {
             canvas,
             line,
             324,
-            330 + index as i32 * 26,
+            meta_y + 38 + index as i32 * 26,
             17.0,
             WHITE.with_alpha(205),
             FontWeight::Regular,
@@ -1565,7 +1854,7 @@ fn draw_hero(canvas: &mut Canvas, rect: Rect, poster: Rect, item: &DemoItem) {
     canvas.fill_round_rect(badge, 12.0, Color::rgba(0, 0, 0, 150));
     text_centered(
         canvas,
-        "PUBLIC DOMAIN",
+        "ARCHIVE.ORG",
         badge.center().0,
         badge.y + 16,
         9.0,
@@ -1574,7 +1863,7 @@ fn draw_hero(canvas: &mut Canvas, rect: Rect, poster: Rect, item: &DemoItem) {
     );
 }
 
-fn draw_poster(canvas: &mut Canvas, rect: Rect, item: &DemoItem, show_title: bool) {
+fn draw_poster(canvas: &mut Canvas, rect: Rect, item: &MediaItem, show_title: bool) {
     canvas.fill_round_vertical_gradient(rect, 16.0, item.palette.0, item.palette.1);
     draw_art_shapes(canvas, rect, item);
     let initial = item.title.chars().next().unwrap_or('A');
@@ -1598,7 +1887,7 @@ fn draw_poster(canvas: &mut Canvas, rect: Rect, item: &DemoItem, show_title: boo
     canvas.stroke_round_rect(rect.inset(1), 15.0, 1.0, WHITE.with_alpha(18));
     if show_title {
         let style = TextStyle::new(20.0, WHITE).semibold();
-        let lines = canvas.wrapped(item.title, (rect.width - 32) as f32, 3, style);
+        let lines = canvas.wrapped(&item.title, (rect.width - 32) as f32, 3, style);
         let base = rect.bottom() - 20 - (lines.len() as i32 - 1) * 26;
         for (index, line) in lines.iter().enumerate() {
             text(
@@ -1613,11 +1902,7 @@ fn draw_poster(canvas: &mut Canvas, rect: Rect, item: &DemoItem, show_title: boo
         }
         text(
             canvas,
-            &format!(
-                "{}  ·  {}",
-                item.year,
-                item.genres.first().copied().unwrap_or("Feature")
-            ),
+            &item.card_meta(),
             rect.x + 16,
             rect.y + rect.height - 118,
             10.0,
@@ -1627,7 +1912,7 @@ fn draw_poster(canvas: &mut Canvas, rect: Rect, item: &DemoItem, show_title: boo
     }
 }
 
-fn draw_art_shapes(canvas: &mut Canvas, rect: Rect, item: &DemoItem) {
+fn draw_art_shapes(canvas: &mut Canvas, rect: Rect, item: &MediaItem) {
     let center = (rect.x + rect.width * 3 / 4, rect.y + rect.height / 4);
     match item.id.rem_euclid(3) {
         0 => {
@@ -1690,7 +1975,7 @@ fn draw_art_shapes(canvas: &mut Canvas, rect: Rect, item: &DemoItem) {
 fn draw_landscape(
     canvas: &mut Canvas,
     rect: Rect,
-    item: &DemoItem,
+    item: &MediaItem,
     progress: Option<f32>,
     show_resume: bool,
     focused: bool,
@@ -1707,7 +1992,7 @@ fn draw_landscape(
         canvas.fill_round_rect(rect, 14.0, WHITE.with_alpha(8));
     }
     let title = canvas.clipped(
-        item.title,
+        &item.title,
         (rect.width - 36) as f32,
         TextStyle::new(20.0, WHITE).semibold(),
     );
@@ -1731,11 +2016,7 @@ fn draw_landscape(
             item.resume_label().unwrap_or_else(|| item.runtime_label())
         }
     } else {
-        format!(
-            "{}  ·  {}",
-            item.year,
-            item.genres.first().copied().unwrap_or("Feature")
-        )
+        item.card_meta()
     };
     text(
         canvas,

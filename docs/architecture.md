@@ -6,8 +6,8 @@
 ┌──────────────────────────────────────────────┐
 │ sim: SDL2 window, texture upload, screenshots │
 ├──────────────────────────────────────────────┤
-│ app: screen state, focus targets, actions,    │
-│      demo catalogue, software screen drawing  │
+│ app: screen state, focus targets, live worker,│
+│      catalogue, software screen drawing       │
 ├──────────────────────────────────────────────┤
 │ ui: screens, theme, spatial focus navigation  │
 │ gfx: software canvas, type, geometry, PNG     │
@@ -45,9 +45,13 @@ spatial nearest-neighbour search in `ui::navigate`; a simple row-major
 
 - **UI/render thread** owns SDL, the window, the focus tree, and all screen
   state. It never blocks on the network.
-- **API worker** (next milestone) performs one request at a time on a
-  `std::thread`, then posts a `Result<Response, ApiError>` back through a
-  channel. The render loop drains results at the start of a frame.
+- **API worker** (`app::live`) owns the `ApiClient`, the pairing grant, and the
+  `SecretStore`. It performs one request at a time on a `std::thread` and posts
+  `LiveEvent`s back through a channel. The render loop drains them at the start
+  of a frame and never waits for a request.
+- **Catalogue mapping** happens on the UI thread: `LibraryResponse` becomes a
+  `Catalog`, and `MediaDetails` updates one item in place. The server remains
+  the source of truth for file selection and progress.
 - **Playback position** is read from `com.webos.media` on a timer; progress is
   written from the API worker every 15 seconds, on pause, and on stop.
 - No `tokio`, no `async-std`, no WebView, no JavaScript.
@@ -76,9 +80,32 @@ device grant with `POST /api/device/start`, and polls
 persisted through `SecretStore`; `Debug` implementations redact both the device
 code and the bearer token.
 
-The host simulator exposes this as `--pair <url> --session <path>` so the
-exchange can be tested against a real server before the pairing screen is wired
-to a worker thread.
+`app::live::LiveClient` runs the exchange on the API worker. The simulator's
+`--server <url> --session <path>` mode displays the live code and QR, polls
+until approval, stores the token, and then loads the library. A saved session is
+reused only when its server URL matches `--server`; otherwise the worker clears
+it and pairs against the requested server. `--pair` remains a terminal-only
+check for the same exchange.
+
+## Live catalogue
+
+`Catalog` is the view model shared by the demo and live modes. `from_library`
+maps `LibraryItem`s into owned `MediaItem`s, preserving loaded descriptions,
+episodes, and playback plans by identifier across refreshes. `apply_details`
+fills a title after `GET /api/playback/{identifier}?platform=webos`; a movie with
+several video files stays a movie, while a TV item becomes a series with episode
+rows.
+
+The server does not expose a poster proxy, so live cards currently use the same
+deterministic procedural artwork as the demo. `poster_url` is retained on each
+item for the image-decoding milestone.
+
+Category chips and search suggestions come from the loaded catalogue rather than
+a hardcoded genre list, so a live library with a single "Horror" category shows
+only that chip. An empty library renders an explicit empty state.
+`App::selected_item` resolves
+to a safe placeholder, so the Detail and Player screens cannot panic if a title
+is removed by the web app during a refresh.
 
 ## Server connection policy
 
@@ -126,18 +153,22 @@ set; if a file is not directly playable the plan should say so.
 
 ## Host simulator
 
-`crates/sim` is the only crate that links SDL2. It has two modes:
+`crates/sim` is the only crate that links SDL2. It has three modes:
 
-- Windowed: render, upload the RGBA texture, drain keyboard events, and tick the
-  player. F11 toggles fullscreen; F12 writes a screenshot.
-- Headless: `--all` or `--screenshot` renders deterministic screens to PNG
-  without initializing video, so CI and screenshots work over SSH.
+- Windowed demo: render the deterministic catalogue, upload the RGBA texture,
+  drain keyboard events, and tick the player. F11 toggles fullscreen; F12 writes
+  a screenshot.
+- Windowed live: `--server <url>` starts the API worker. Actions dispatch
+  `LoadDetails` and `Refresh`; `Pair` and `PairRefresh` start a new grant.
+- Headless: `--all`, `--screenshot`, and `--live-shot` render to PNG without
+  initializing video, so CI and screenshots work over SSH.
 
 ## Error handling
 
-- `ApiError::Unauthorized` always returns to pairing.
+- `ApiError::Unauthorized` always returns to pairing and clears the stored
+  token; other errors become a toast and leave the session intact.
 - `ApiError::Status` carries the server `code`, message, and `Retry-After`.
   Pairing polls honor `slow_down`/`rate_limited` and back off.
 - `ApiError::ApiVersion` is a terminal setup error with a clear message.
-- A corrupt stored session is cleared and treated as "not paired" rather than
-  crashing the app.
+- A corrupt stored session is treated as "not paired" rather than crashing the
+  app. A failed library refresh keeps the last good catalogue on screen.

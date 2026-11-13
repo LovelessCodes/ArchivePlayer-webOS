@@ -25,6 +25,7 @@ impl Theme {
     pub const PRIMARY_DARK: Color = Color::rgb(164, 43, 35);
     pub const SUCCESS: Color = Color::rgb(78, 201, 140);
     pub const AMBER: Color = Color::rgb(239, 174, 75);
+    pub const DANGER: Color = Color::rgb(235, 94, 94);
 
     pub const SIDEBAR: i32 = 232;
     pub const CONTENT_X: i32 = 280;

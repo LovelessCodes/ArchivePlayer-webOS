@@ -3,8 +3,18 @@
 use archiveplayer_tv_gfx::Rect;
 use archiveplayer_tv_ui::{self as ui, FocusMove, Screen};
 
-use crate::demo::{DemoItem, DemoLibrary};
+use crate::catalog::{Catalog, MediaItem};
 use crate::layout;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairingStatus {
+    Connecting,
+    Waiting,
+    Approved,
+    Denied,
+    Expired,
+    Error,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -17,6 +27,7 @@ pub enum Action {
     SearchSuggest(usize),
     Pair,
     PairSimulate,
+    PairRefresh,
     Reconnect,
     TogglePlay,
     Seek(i64),
@@ -36,13 +47,13 @@ pub const NAV_SCREENS: [Screen; 4] = [
     Screen::Settings,
 ];
 
-pub const SEARCH_SUGGESTIONS: [&str; 4] = ["Documentary", "Noir", "Silent film", "Sci-Fi"];
+const DEFAULT_SEARCH_SUGGESTIONS: [&str; 4] = ["Documentary", "Noir", "Silent film", "Sci-Fi"];
 
 pub struct App {
     pub screen: Screen,
     pub previous: Option<Screen>,
     pub focus_index: usize,
-    pub library: DemoLibrary,
+    pub library: Catalog,
     pub selected: usize,
     pub category: usize,
     pub search_query: String,
@@ -51,6 +62,16 @@ pub struct App {
     pub player_duration: f64,
     pub player_playing: bool,
     pub paired: bool,
+    pub live: bool,
+    pub server_name: String,
+    pub server_url: String,
+    pub server_version: String,
+    pub server_lan: bool,
+    pub pairing_code: String,
+    pub pairing_uri: String,
+    pub pairing_complete_uri: String,
+    pub pairing_status: PairingStatus,
+    pub pairing_seconds_left: i64,
     pub clock: String,
     pub date: String,
     pub toast: Option<String>,
@@ -60,8 +81,8 @@ pub struct App {
 
 impl App {
     pub fn demo() -> Self {
-        let library = DemoLibrary::demo();
-        let featured = library.featured();
+        let library = Catalog::demo();
+        let featured = library.featured().expect("the demo catalogue is not empty");
         let (player_position, player_duration) = featured.progress.unwrap_or((0, 0));
         Self {
             screen: Screen::Home,
@@ -76,6 +97,117 @@ impl App {
             player_duration: player_duration.max(1) as f64,
             player_playing: false,
             paired: true,
+            live: false,
+            server_name: "Living room".into(),
+            server_url: "http://192.168.1.20:8080".into(),
+            server_version: "0.5.0".into(),
+            server_lan: true,
+            pairing_code: "ABCD–EFGH".into(),
+            pairing_uri: "http://192.168.1.20:8080/#/activate".into(),
+            pairing_complete_uri: "http://192.168.1.20:8080/#/activate?code=ABCD-EFGH".into(),
+            pairing_status: PairingStatus::Waiting,
+            pairing_seconds_left: 582,
+            clock: "20:41".into(),
+            date: "Fri 13 Nov".into(),
+            toast: None,
+            toast_frames: 0,
+            frame: 0,
+        }
+    }
+
+    /// Switch from the demo catalogue to a server catalogue. The selected index
+    /// is clamped so a refresh cannot leave the Detail screen pointing at a
+    /// removed title.
+    pub fn set_catalog(&mut self, catalog: Catalog) {
+        let was_pairing = self.screen == Screen::Pair;
+        self.library = catalog;
+        self.selected = self
+            .selected
+            .min(self.library.items.len().saturating_sub(1));
+        if was_pairing && self.paired {
+            self.set_screen(Screen::Home);
+        }
+        if self.library.items.is_empty() && matches!(self.screen, Screen::Detail | Screen::Player) {
+            self.set_screen(Screen::Home);
+        }
+    }
+
+    pub fn set_connection(
+        &mut self,
+        name: impl Into<String>,
+        url: impl Into<String>,
+        version: impl Into<String>,
+        lan: bool,
+        paired: bool,
+    ) {
+        self.server_name = name.into();
+        self.server_url = url.into();
+        self.server_version = version.into();
+        self.server_lan = lan;
+        self.paired = paired;
+        if !paired {
+            self.pairing_status = PairingStatus::Waiting;
+            if self.screen != Screen::Pair {
+                self.previous = Some(self.screen);
+                self.screen = Screen::Pair;
+                self.focus_index = 0;
+            }
+        } else if self.screen == Screen::Pair {
+            self.screen = Screen::Home;
+            self.previous = None;
+            self.focus_index = 0;
+        }
+    }
+
+    pub fn set_pairing_code(
+        &mut self,
+        code: impl Into<String>,
+        uri: impl Into<String>,
+        complete_uri: impl Into<String>,
+        expires_in_seconds: i64,
+    ) {
+        self.pairing_code = code.into();
+        self.pairing_uri = uri.into();
+        self.pairing_complete_uri = complete_uri.into();
+        self.pairing_seconds_left = expires_in_seconds;
+        self.pairing_status = PairingStatus::Waiting;
+        if self.screen != Screen::Pair {
+            self.previous = Some(self.screen);
+            self.screen = Screen::Pair;
+            self.focus_index = 0;
+        }
+    }
+
+    pub fn set_pairing_status(&mut self, status: PairingStatus) {
+        self.pairing_status = status;
+    }
+
+    /// An empty live client. Pairing is the first screen; the worker fills the
+    /// catalogue as soon as the session is approved.
+    pub fn live(server_name: impl Into<String>, server_url: impl Into<String>) -> Self {
+        Self {
+            screen: Screen::Pair,
+            previous: Some(Screen::Home),
+            focus_index: 0,
+            library: Catalog::empty(),
+            selected: 0,
+            category: 0,
+            search_query: String::new(),
+            search_editing: false,
+            player_position: 0.0,
+            player_duration: 1.0,
+            player_playing: false,
+            paired: false,
+            live: true,
+            server_name: server_name.into(),
+            server_url: server_url.into(),
+            server_version: String::new(),
+            server_lan: true,
+            pairing_code: String::new(),
+            pairing_uri: String::new(),
+            pairing_complete_uri: String::new(),
+            pairing_status: PairingStatus::Connecting,
+            pairing_seconds_left: 0,
             clock: "20:41".into(),
             date: "Fri 13 Nov".into(),
             toast: None,
@@ -96,49 +228,64 @@ impl App {
         self.toast_frames = 180;
     }
 
-    pub fn selected_item(&self) -> &DemoItem {
+    pub fn selected_item(&self) -> &MediaItem {
         self.library.item(self.selected)
     }
 
     pub fn visible_items(&self) -> Vec<usize> {
-        match self.category {
-            0 => (0..self.library.items.len()).collect(),
-            1 => self
+        if self.category == 0 {
+            return (0..self.library.items.len()).collect();
+        }
+        let Some(name) = self.library.categories.get(self.category) else {
+            return (0..self.library.items.len()).collect();
+        };
+        let name = name.trim();
+        if name.eq_ignore_ascii_case("movies") {
+            return self
                 .library
                 .items
                 .iter()
                 .enumerate()
-                .filter(|(_, item)| !item.is_series())
+                .filter(|(_, item)| item.media_type == crate::catalog::MediaType::Movie)
                 .map(|(index, _)| index)
-                .collect(),
-            2 => self
+                .collect();
+        }
+        if name.eq_ignore_ascii_case("series") {
+            return self
                 .library
                 .items
                 .iter()
                 .enumerate()
                 .filter(|(_, item)| item.is_series())
                 .map(|(index, _)| index)
-                .collect(),
-            3 => self.find_genre("Documentaries"),
-            4 => self.find_genre("Noir"),
-            5 => self.find_genre("Sci-Fi"),
-            _ => (0..self.library.items.len()).collect(),
+                .collect();
         }
-    }
-
-    fn find_genre(&self, genre: &str) -> Vec<usize> {
-        let needle = genre.trim_end_matches('s').to_lowercase();
+        let needle = name.trim_end_matches('s').to_lowercase();
         self.library
             .items
             .iter()
             .enumerate()
             .filter(|(_, item)| {
-                item.genres
-                    .iter()
-                    .any(|item_genre| item_genre.to_lowercase().contains(&needle))
+                item.category.to_lowercase().contains(&needle)
+                    || item
+                        .genres
+                        .iter()
+                        .any(|genre| genre.to_lowercase().contains(&needle))
             })
             .map(|(index, _)| index)
             .collect()
+    }
+
+    pub fn search_suggestions(&self) -> Vec<String> {
+        let suggestions = self.library.suggestions();
+        if suggestions.is_empty() {
+            DEFAULT_SEARCH_SUGGESTIONS
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect()
+        } else {
+            suggestions
+        }
     }
 
     pub fn search_results(&self) -> Vec<usize> {
@@ -221,7 +368,8 @@ impl App {
             }
             Screen::Search => {
                 let results = self.search_results();
-                let search = layout::search(SEARCH_SUGGESTIONS.len(), results.len());
+                let suggestions = self.search_suggestions();
+                let search = layout::search(suggestions.len(), results.len());
                 targets.push(FocusTarget {
                     rect: search.input,
                     action: Action::FocusSearch,
@@ -254,7 +402,11 @@ impl App {
                 let pair = layout::pair();
                 targets.push(FocusTarget {
                     rect: pair.simulate,
-                    action: Action::PairSimulate,
+                    action: if self.live {
+                        Action::PairRefresh
+                    } else {
+                        Action::PairSimulate
+                    },
                 });
                 targets.push(FocusTarget {
                     rect: pair.back,
@@ -325,12 +477,13 @@ impl App {
         self.focus_index = ui::navigate(&rects, self.focus_index, direction);
     }
 
-    pub fn activate(&mut self) {
+    pub fn activate(&mut self) -> Action {
         let targets = self.targets();
         let Some(target) = targets.get(self.focus_index) else {
-            return;
+            return Action::None;
         };
-        match target.action {
+        let action = target.action;
+        match action {
             Action::Go(screen) => self.set_screen(screen),
             Action::Open(index) => {
                 self.selected = index;
@@ -344,8 +497,8 @@ impl App {
             Action::SetCategory(index) => self.category = index,
             Action::FocusSearch => self.search_editing = true,
             Action::SearchSuggest(index) => {
-                if let Some(suggestion) = SEARCH_SUGGESTIONS.get(index) {
-                    self.search_query = (*suggestion).to_string();
+                if let Some(suggestion) = self.search_suggestions().get(index) {
+                    self.search_query = suggestion.clone();
                     self.search_editing = false;
                 }
             }
@@ -354,6 +507,11 @@ impl App {
                 self.paired = true;
                 self.show_toast("Device paired with Living room");
                 self.set_screen(Screen::Home);
+            }
+            Action::PairRefresh => {
+                self.pairing_status = PairingStatus::Connecting;
+                self.pairing_code.clear();
+                self.pairing_complete_uri.clear();
             }
             Action::Reconnect => {
                 self.show_toast("Connection is healthy");
@@ -365,6 +523,7 @@ impl App {
             }
             Action::None => {}
         }
+        action
     }
 
     pub fn on_text(&mut self, text: &str) {
@@ -383,6 +542,9 @@ impl App {
 
     pub fn tick(&mut self, seconds: f64) {
         self.frame = self.frame.wrapping_add(1);
+        if self.pairing_seconds_left > 0 {
+            self.pairing_seconds_left -= 1;
+        }
         if self.toast_frames > 0 {
             self.toast_frames -= 1;
             if self.toast_frames == 0 {

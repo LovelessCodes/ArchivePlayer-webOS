@@ -6,10 +6,10 @@ talks to the server over the documented HTTP API, and (in the next milestone)
 hands Archive.org MP4s to the television's own media pipeline. No Chromium, no
 WebView, no JavaScript runtime.
 
-> **Status: host preview.** The native UI, focus model, demo catalogue, QR
-> pairing screen, API client, and platform seams compile and run today. The
-> webOS GLES2 backend and `com.webos.media` playback path still need a hardware
-> spike, and this repository is not yet installable on a television.
+> **Status: host preview with live server mode.** The native UI, focus model,
+> QR pairing screen, API worker, and live library/detail loading run on the host
+> today. The webOS GLES2 backend and `com.webos.media` playback path still need a
+> hardware spike, and this repository is not yet installable on a television.
 
 ![ArchivePlayer webOS home screen](docs/screenshots/home.png)
 
@@ -36,15 +36,18 @@ deterministic screenshot mode that runs without a display.
 | Server URL validation (LAN HTTP, public HTTPS) | Done |
 | LAN-first connect with remote fallback only on transport errors | Done |
 | Bearer API client: health, status, library, continue-watching, search, playback | Done |
-| Device pairing flow: start, poll, approve, store | Done (terminal) |
+| Device pairing flow: start, poll, approve, store | Done (worker + terminal) |
 | Playback-plan support (`platform=webos`, `file=...`) | Done |
 | Startup state machine (`Setup → Pairing → Ready → Pairing` on 401) | Done |
 | Token store: private file / memory | Done |
 | 1920×1080 software canvas + type rendering | Done |
 | SDL2 host window, D-pad focus, seven screens | Done |
 | Demo library, search, detail, player, settings | Done |
-| Pairing screen with a real QR code | Done (demo approval) |
-| Real pairing flow wired to the UI | Not yet |
+| Live server library, details, and settings | Done (host mode) |
+| Live pairing screen: code, QR, poll, token store | Done |
+| Library search over the live catalogue | Done |
+| Archive.org search and "add to library" | Not yet |
+| Remote poster image decoding | Not yet (procedural artwork) |
 | mDNS `_archiveplayer._tcp` discovery | Interface only |
 | GLES2 renderer and `com.webos.media` playback | Not yet |
 | `.ipk` packaging and device install | Not yet |
@@ -57,7 +60,7 @@ crates/api/        blocking ureq client, URL policy, server targets, sessions
 crates/platform/   secret-store and discovery traits + host implementations
 crates/ui/         screens, theme, spatial focus navigation
 crates/gfx/        software canvas, text, geometry, PNG output
-crates/app/        startup state, demo catalogue, screen state and renderer
+crates/app/        startup state, live worker, catalogue, screen state, renderer
 crates/sim/        SDL2 host window + headless screenshot renderer
 assets/fonts/      bundled Inter (SIL OFL; see assets/fonts/LICENSE.txt)
 pkg/               webOS appinfo and icons
@@ -85,17 +88,35 @@ cargo run -p archiveplayer-webos-sim -- --all docs/screenshots
 cargo run -p archiveplayer-webos-sim -- --screenshot home.png --screen home
 ```
 
-The pairing client can be exercised against a real server before the UI is
-wired to it:
+Run the complete client against a real server:
+
+```sh
+cargo run -p archiveplayer-webos-sim -- \
+  --server http://192.168.1.20:8080 \
+  --session ~/.local/share/archiveplayer-webos/session.json
+```
+
+With no saved session, the pairing screen appears with a live code and QR. After
+approval the worker stores the token, loads the library, and switches to Home.
+The same mode can render a live frame without a display:
+
+```sh
+cargo run -p archiveplayer-webos-sim -- \
+  --server http://192.168.1.20:8080 \
+  --session /tmp/tv-session.json \
+  --live-shot /tmp/live-home.png
+```
+
+Use `--live-screen detail` or `--live-screen settings` to capture another
+screen. The session is written with mode `0600`; the token is never printed.
+
+The pairing exchange can also be tested without the window:
 
 ```sh
 cargo run -p archiveplayer-webos-sim -- \
   --pair http://192.168.1.20:8080 \
   --session /tmp/archiveplayer-tv-session.json
 ```
-
-Approve the printed code in the web app. The resulting session is written with
-mode `0600`; the token is never printed.
 
 Checks:
 
@@ -118,9 +139,10 @@ cargo test --workspace
    `Authorization: Bearer <token>`. `PairingFlow` implements this exchange,
    including `authorization_pending`, `slow_down`, `access_denied`, and
    `expired_token`.
-5. Playback calls `/api/playback/{identifier}?platform=webos` and uses
-   `playbackPlan`. If `playbackPlan.compatible` is false, the UI explains why
-   instead of starting a decode that will fail.
+5. The worker loads `/api/library`, and `/api/playback/{identifier}?platform=webos`
+   when a title opens. `playbackPlan` supplies the selected file and reason; if
+   `playbackPlan.compatible` is false, the UI explains why instead of starting a
+   decode that will fail.
 
 The full contract is in the server's
 [docs/tv-clients.md](https://github.com/LovelessCodes/ArchivePlayer/blob/main/docs/tv-clients.md).
@@ -137,11 +159,10 @@ silicon) or an **arm64** Linux host, install the NDK and the
 1. Hardware spike on one webOS 5+ television: SDL2 EGL/GLES2 context, D-pad
    events, background/foreground lifecycle, exported window, and an Archive.org
    MP4 through `com.webos.media`.
-2. Replace the demo catalogue with the real API: pairing poll, token store, and
-   library/search/detail loading on a worker thread.
-3. Add the webOS GLES2 backend and `com.webos.media` player, keeping the same
+2. Add the webOS GLES2 backend and `com.webos.media` player, keeping the same
    screen state and draw calls.
-4. Progress every 15 s, on pause, and on stop; completed at end.
+3. Progress every 15 s, on pause, and on stop; completed at end.
+4. Poster image decoding and Archive.org search/add-to-library.
 5. mDNS discovery, Homebrew manifest, unsigned `.ipk` release.
 
 See [docs/architecture.md](docs/architecture.md) for the design and
