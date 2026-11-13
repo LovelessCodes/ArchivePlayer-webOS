@@ -1,0 +1,17 @@
+[package]
+name = "archiveplayer-tv-platform"
+description = "Persistent-storage and discovery seams for native TV clients"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+archiveplayer-tv-api = { path = "../api" }
+archiveplayer-tv-protocol = { path = "../protocol" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

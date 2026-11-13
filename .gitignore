@@ -1,0 +1,5 @@
+/target
+/pkg/*.ipk
+/pkg/archiveplayer-webos
+*.log
+.DS_Store

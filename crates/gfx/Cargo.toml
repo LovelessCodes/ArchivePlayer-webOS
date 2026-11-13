@@ -1,0 +1,8 @@
+[package]
+name = "archiveplayer-tv-gfx"
+description = "Geometry and color types for the GLES2 renderer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true

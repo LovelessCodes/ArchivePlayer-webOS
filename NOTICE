@@ -1,0 +1,14 @@
+ArchivePlayer for webOS
+
+This software is a native client for ArchivePlayer, a self-hosted media library
+for Archive.org. ArchivePlayer is a Rust rewrite derived from the original
+ArchivePlayer project by Jeppe Kjeldal:
+
+https://github.com/JeppeKjeldal/ArchivePlayer
+
+Original work Copyright (c) 2026 Jeppe Kjeldal
+Modifications Copyright (c) 2026 ArchivePlayer contributors
+
+This client is an independent implementation of the documented ArchivePlayer
+HTTP contract. It is not affiliated with or endorsed by LG Electronics or the
+Internet Archive. Archive.org content remains subject to its own terms.

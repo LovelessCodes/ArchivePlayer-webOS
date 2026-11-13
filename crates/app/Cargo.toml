@@ -1,0 +1,15 @@
+[package]
+name = "archiveplayer-webos"
+description = "Native ArchivePlayer client for LG webOS"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+archiveplayer-tv-api = { path = "../api" }
+archiveplayer-tv-gfx = { path = "../gfx" }
+archiveplayer-tv-platform = { path = "../platform" }
+archiveplayer-tv-protocol = { path = "../protocol" }
+archiveplayer-tv-ui = { path = "../ui" }
