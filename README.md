@@ -2,16 +2,16 @@
 
 A native LG webOS client for [ArchivePlayer](https://github.com/LovelessCodes/ArchivePlayer),
 the self-hosted Archive.org media library. It draws its own 10-foot UI with SDL2,
-talks to the server over the documented HTTP API, and (in the next milestone)
-hands Archive.org MP4s to the television's own media pipeline. No Chromium, no
-WebView, no JavaScript runtime.
+talks to the server over the documented HTTP API, and hands Archive.org MP4s to
+the television's own hardware decoder through `com.webos.media`. No Chromium, no
+WebView, no JavaScript runtime, no bundled codecs.
 
 > **Status: unsigned webOS preview.** The native UI, focus model, QR pairing,
 > API worker, live library/detail loading, Archive.org search, add-to-library,
-> mDNS discovery, and remote poster/backdrop artwork are packaged as an
-> unsigned `.ipk` for webOS 5+. Video playback still needs the
-> `com.webos.media` hardware spike, so this release is a UI and connectivity
-> preview rather than a complete player.
+> mDNS discovery, remote poster/backdrop artwork, and hardware video playback
+> are packaged as an unsigned `.ipk` for webOS 5+. Playback was verified on an
+> LG 65UN80006LA running webOS 5.4.2; see
+> [docs/hardware-spike.md](docs/hardware-spike.md).
 
 ![ArchivePlayer webOS home screen](docs/screenshots/home.png)
 
@@ -25,7 +25,7 @@ deterministic screenshot mode that runs without a display.
   the webOS NDK, an ARMv7 cross toolchain, SDL2, and LG's native service stubs.
 - Its artifact is an unsigned `.ipk` for Developer Mode / Homebrew Channel, not a
   desktop installer or container image.
-- It releases on its own cadence (`webos-v0.1.0`), against the versioned
+- It releases on its own cadence (`webos-v0.2.0`), against the versioned
   `apiVersion` contract rather than the server's release tag.
 - Keeping the client separate makes the native toolchain and the MIT/GPL
   boundary explicit. This repository is a clean-room MIT implementation; see
@@ -48,12 +48,13 @@ deterministic screenshot mode that runs without a display.
 | Live server library, details, and settings | Done (host mode) |
 | Live pairing screen: code, QR, poll, token store | Done |
 | Archive.org search and one-key add to library | Done (live worker) |
-| Progress every 15 s, on pause, on Back, and at completion | Done (host loop) |
+| Progress every 15 s, on pause, on Back, and at completion | Done (real positions) |
 | Remote poster and wide backdrop decoding | Done (portrait posters, 16:9 backdrops, procedural fallback) |
 | mDNS `_archiveplayer._tcp` discovery | Done (host + TXT address hint) |
 | ARMv7 cross-build with the webOS ABI | Done (openlgtv Buildroot NDK) |
 | Unsigned `.ipk` + Homebrew manifest | Done (`make ipk`, `webos-v*` release) |
-| GLES2 renderer and `com.webos.media` playback | Not yet |
+| Hardware playback through `com.webos.media` | Done (webOS 5, exported window) |
+| Remote Back/OK/D-pad delivery | Done (LG private Back keycode handled) |
 
 ## Layout
 
@@ -185,7 +186,7 @@ verify it against `SHA256SUMS.txt`, then install it through Developer Mode or
 the Homebrew Channel. With the webOS CLI:
 
 ```sh
-ares-install -d <tv> codes.loveless.archiveplayer_0.1.0_arm.ipk
+ares-install -d <tv> codes.loveless.archiveplayer_0.2.0_arm.ipk
 ares-launch -d <tv> codes.loveless.archiveplayer
 ```
 
@@ -215,21 +216,19 @@ make ipk
 ```
 
 `make ipk` cross-builds the SDL2 binary, strips a staged copy, writes
-`dist/codes.loveless.archiveplayer_0.1.0_arm.ipk`, its SHA-256 file, and
+`dist/codes.loveless.archiveplayer_0.2.0_arm.ipk`, its SHA-256 file, and
 `codes.loveless.archiveplayer.manifest.json`. The archive is deterministic:
 the same commit and toolchain produce the same bytes. See
 [docs/build.md](docs/build.md) for the layout and release process.
 
 ## Roadmap
 
-1. Hardware spike on one webOS 5+ television: SDL2 EGL/GLES2 context, D-pad
-   events, background/foreground lifecycle, exported window, and an Archive.org
-   MP4 through `com.webos.media`.
-2. Add the webOS GLES2 backend and `com.webos.media` player, keeping the same
-   screen state and draw calls.
-3. Result pagination and an artwork memory cap for very large libraries.
-4. Submit the Homebrew manifest to the central webOS Homebrew repository once
-   playback is ready.
+1. Result pagination and an artwork memory cap for very large libraries.
+2. A translucent player HUD that fades over the video plane after a few seconds
+   of inactivity.
+3. Suspend/resume handling that pauses the media pipeline with the app.
+4. Submit the Homebrew manifest to the central webOS Homebrew repository now that
+   playback works on hardware.
 
 See [docs/architecture.md](docs/architecture.md) for the design and
 [docs/protocol.md](docs/protocol.md) for the API surface this client uses.

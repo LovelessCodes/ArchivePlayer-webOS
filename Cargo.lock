@@ -16,7 +16,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "archiveplayer-tv-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "archiveplayer-tv-protocol",
  "serde",
@@ -28,7 +28,7 @@ dependencies = [
 
 [[package]]
 name = "archiveplayer-tv-gfx"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fontdue",
  "tiny-skia",
@@ -36,7 +36,7 @@ dependencies = [
 
 [[package]]
 name = "archiveplayer-tv-platform"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "archiveplayer-tv-api",
  "archiveplayer-tv-protocol",
@@ -48,7 +48,7 @@ dependencies = [
 
 [[package]]
 name = "archiveplayer-tv-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -56,14 +56,14 @@ dependencies = [
 
 [[package]]
 name = "archiveplayer-tv-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "archiveplayer-tv-gfx",
 ]
 
 [[package]]
 name = "archiveplayer-webos"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "archiveplayer-tv-api",
  "archiveplayer-tv-gfx",
@@ -72,11 +72,12 @@ dependencies = [
  "archiveplayer-tv-ui",
  "image",
  "qrcodegen",
+ "serde_json",
 ]
 
 [[package]]
 name = "archiveplayer-webos-sim"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "archiveplayer-tv-api",
  "archiveplayer-tv-gfx",

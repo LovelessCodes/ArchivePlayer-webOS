@@ -180,14 +180,46 @@ GET /api/playback/{identifier}?platform=webos[&file=<episode>]
 ```
 
 `playbackPlan` contains the chosen URL, container, codec, dimensions, duration,
-and `compatible`. The intended pipeline is:
+and `compatible`. The implemented pipeline is:
 
 1. `playbackPlan.compatible == false` → show `reason`; do not open the player.
-2. Export the SDL window id (`option.windowId`).
-3. Call `com.webos.media` `load` with the Archive.org URL and the exported
-   window.
-4. Draw the UI overlay above the video plane; the TV decodes the video.
-5. Poll position; send progress on the schedule above.
+2. Export an SDL video window (`SDL_webOSCreateExportedWindow(0)`) and pass its
+   id as `option.windowId`.
+3. Call `com.webos.media` `load` with the Archive.org URL, then `subscribe` and
+   `play`. Seek by sending milliseconds when the plan starts at a saved offset.
+4. Clear the SDL surface's Wayland opaque region every presenting frame so the
+   hardware plane beneath the card is visible; draw the UI on top.
+5. Read `currentTime`, `playing`, `endOfStream`, and `videoInfo` from the
+   subscription and send progress on the schedule above.
+
+### Luna Service identity
+
+The app does not shell out to `luna-send`; its jail refuses `exec`. It links
+`libluna-service2` directly, registers as `com.webos.media.client.<appid>`, and
+uses plain `LSCall`/`LSCallOneReply`. That service name is in the role file the
+installer writes for the app, which also grants outbound access to
+`com.webos.media`. `pkg/appinfo.json` declares `"requiredPermissions":
+["media"]`.
+
+Anonymous registration (`LSRegister(NULL)`) succeeds but every call answers
+`Message status unknown.`; `LSCallFromApplication` answers `not privileged`.
+Both are dead ends on this firmware.
+
+### UI plane
+
+`SDL_VIDEO_EGL_ALLOW_TRANSPARENCY=1` before `SDL_Init` gives the card's EGL
+surface an alpha channel. SDL still marks its Wayland surface opaque, so every
+frame that has an active video plane calls
+`wl_proxy_marshal(surface, WL_SURFACE_SET_OPAQUE_REGION, NULL)` before
+`SDL_RenderPresent`. Without that call the card composites as an opaque black
+rectangle over a correctly decoding film. `SDL_GetWindowWMInfo` supplies the
+surface; the LG fork writes a larger `SDL_SysWMinfo` than its headers declare,
+so the query buffer is over-allocated.
+
+`com.webos.service.capture` screenshots contain the graphics plane only, so a
+captured frame shows the UI over black rather than the film. The media plane is
+confirmed from `videooutputd` (`outputRegion 0,0,3840,2160`, `VDEC_3`, and a
+`playState` of `playing`), not from a screenshot.
 
 webOS 5+ is the first target. webOS 4.x needs an ACB plane path and is a later
 optional effort; webOS 3.x is out of scope. FFmpeg is not in the v1 dependency

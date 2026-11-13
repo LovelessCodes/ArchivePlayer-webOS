@@ -228,6 +228,27 @@ impl SearchCard {
     }
 }
 
+/// A public-domain MP4 that the webOS 5 decoder plays directly.
+const DEMO_URL: &str = "https://archive.org/download/57afnt64nightofthelivingdeadv2/57%20A%20FNT%20%23%2064%20Night%20of%20the%20Living%20Dead%20V2.ia.mp4";
+
+fn demo_plan() -> PlaybackPlan {
+    PlaybackPlan {
+        platform: String::new(),
+        file_name: String::new(),
+        url: DEMO_URL.to_string(),
+        mime_type: None,
+        format: None,
+        container: None,
+        video_codec: None,
+        size_bytes: None,
+        length_seconds: Some(7_200.0),
+        width: Some(640),
+        height: Some(360),
+        compatible: true,
+        reason: None,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Catalog {
     pub items: Vec<MediaItem>,
@@ -236,8 +257,18 @@ pub struct Catalog {
 
 impl Catalog {
     pub fn demo() -> Self {
+        let mut items = items();
+        // The demo is also the offline hardware test: the featured title has a
+        // real, direct-playable Archive.org file so the television can exercise
+        // the media pipeline without a server.
+        if let Some(item) = items
+            .iter_mut()
+            .find(|item| item.identifier == "night_of_the_living_dead")
+        {
+            item.playback_plan = Some(demo_plan());
+        }
         Self {
-            items: items(),
+            items,
             categories: ["All", "Movies", "Series", "Horror", "Noir", "Sci-Fi"]
                 .iter()
                 .map(|name| (*name).to_string())
@@ -924,6 +955,20 @@ mod tests {
         assert!(previous.set_backdrop("night_of_the_living_dead", image));
         let next = Catalog::from_library(&response, &previous);
         assert!(next.item(0).backdrop.is_some());
+    }
+
+    #[test]
+    fn the_demo_feature_can_play_on_the_television() {
+        let catalog = Catalog::demo();
+        let plan = catalog
+            .items
+            .iter()
+            .find(|item| item.identifier == "night_of_the_living_dead")
+            .and_then(|item| item.playback_plan.as_ref())
+            .expect("the demo feature should carry a playback plan");
+        assert!(plan.compatible);
+        assert!(plan.url.starts_with("https://archive.org/download/"));
+        assert_eq!(plan.length_seconds, Some(7_200.0));
     }
 
     #[test]

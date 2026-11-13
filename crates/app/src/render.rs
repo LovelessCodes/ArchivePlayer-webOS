@@ -15,12 +15,18 @@ const WHITE: Color = Color::WHITE;
 const PANEL_SHADOW: Color = Color::rgba(0, 0, 0, 110);
 
 pub fn render(app: &App, canvas: &mut Canvas) {
-    canvas.clear(Theme::BG);
-    canvas.fill_vertical_gradient(
-        Rect::new(0, 0, Theme::WIDTH, Theme::HEIGHT),
-        Theme::BG_SOFT,
-        Theme::BG,
-    );
+    if app.video_active && app.screen == Screen::Player {
+        // The media service owns the plane below us. Only the controls and the
+        // two scrims are drawn, so the decoded frame shows through.
+        canvas.clear(Color::rgba(0, 0, 0, 0));
+    } else {
+        canvas.clear(Theme::BG);
+        canvas.fill_vertical_gradient(
+            Rect::new(0, 0, Theme::WIDTH, Theme::HEIGHT),
+            Theme::BG_SOFT,
+            Theme::BG,
+        );
+    }
 
     match app.screen {
         Screen::Home => {
@@ -1555,9 +1561,9 @@ fn draw_settings(app: &App, canvas: &mut Canvas) {
         settings.cards[3],
         "ABOUT",
         "MIT licensed",
-        "ArchivePlayer 0.1.0",
+        concat!("ArchivePlayer ", env!("CARGO_PKG_VERSION")),
         &about_lines,
-        Some(("v0.1.0", Theme::DIM)),
+        Some((concat!("v", env!("CARGO_PKG_VERSION")), Theme::DIM)),
     );
 
     draw_button(
@@ -1861,17 +1867,19 @@ fn draw_qr(canvas: &mut Canvas, rect: Rect, text_value: &str) {
 
 fn draw_player(app: &App, canvas: &mut Canvas) {
     let item = app.selected_item();
-    canvas.fill_round_vertical_gradient(
-        Rect::new(0, 0, Theme::WIDTH, Theme::HEIGHT),
-        0.0,
-        item.palette.0,
-        item.palette.1,
-    );
-    canvas.fill_circle((1500, 280), 420.0, item.accent.with_alpha(22));
-    canvas.fill_circle((520, 820), 300.0, item.accent.with_alpha(12));
-    for offset in 0..10 {
-        let x = 500 + offset * 130;
-        canvas.line(x, 0, x - 260, Theme::HEIGHT, 1.0, WHITE.with_alpha(8));
+    if !app.video_active {
+        canvas.fill_round_vertical_gradient(
+            Rect::new(0, 0, Theme::WIDTH, Theme::HEIGHT),
+            0.0,
+            item.palette.0,
+            item.palette.1,
+        );
+        canvas.fill_circle((1500, 280), 420.0, item.accent.with_alpha(22));
+        canvas.fill_circle((520, 820), 300.0, item.accent.with_alpha(12));
+        for offset in 0..10 {
+            let x = 500 + offset * 130;
+            canvas.line(x, 0, x - 260, Theme::HEIGHT, 1.0, WHITE.with_alpha(8));
+        }
     }
     // Darken for the overlay controls.
     canvas.fill_vertical_gradient(
@@ -1935,33 +1943,36 @@ fn draw_player(app: &App, canvas: &mut Canvas) {
     );
 
     // A quiet typographic watermark stands in for video on the host renderer.
-    let initial = item.title.chars().next().unwrap_or('A').to_string();
-    text_centered(
-        canvas,
-        &initial,
-        Theme::WIDTH / 2,
-        660,
-        420.0,
-        item.accent.with_alpha(14),
-        FontWeight::Bold,
-    );
-    if app.player_playing {
+    // With a real media pipeline it would hide the film.
+    if !app.video_active {
+        let initial = item.title.chars().next().unwrap_or('A').to_string();
         text_centered(
             canvas,
-            "PLAYING",
+            &initial,
             Theme::WIDTH / 2,
-            700,
-            12.0,
-            WHITE.with_alpha(130),
-            FontWeight::SemiBold,
+            660,
+            420.0,
+            item.accent.with_alpha(14),
+            FontWeight::Bold,
         );
-    } else {
-        draw_icon(
-            canvas,
-            "play",
-            Rect::new(Theme::WIDTH / 2 - 20, 476, 40, 40),
-            WHITE,
-        );
+        if app.player_playing {
+            text_centered(
+                canvas,
+                "PLAYING",
+                Theme::WIDTH / 2,
+                700,
+                12.0,
+                WHITE.with_alpha(130),
+                FontWeight::SemiBold,
+            );
+        } else {
+            draw_icon(
+                canvas,
+                "play",
+                Rect::new(Theme::WIDTH / 2 - 20, 476, 40, 40),
+                WHITE,
+            );
+        }
     }
 
     // Progress and controls.

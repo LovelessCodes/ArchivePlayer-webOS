@@ -20,6 +20,7 @@ use archiveplayer_webos::pairing::{PairingFlow, PairingPoll};
 use archiveplayer_webos::progress::{target_for, ProgressAction, ProgressTracker};
 use archiveplayer_webos::render;
 use archiveplayer_webos::state::{App, PairingStatus};
+use archiveplayer_webos::video::{VideoEvent, VideoPlayer};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
@@ -28,6 +29,114 @@ use sdl2::video::FullscreenType;
 
 const WIDTH: u32 = 1920;
 const HEIGHT: u32 = 1080;
+
+#[cfg(all(target_arch = "arm", target_os = "linux"))]
+mod webos {
+    use std::ffi::{c_char, CStr};
+
+    const EXPORTED_TYPE_VIDEO: i32 = 0;
+
+    #[link(name = "wayland-client")]
+    extern "C" {
+        fn SDL_GetWindowWMInfo(window: *mut std::ffi::c_void, info: *mut std::ffi::c_void) -> i32;
+        fn SDL_GetVersion(version: *mut u8);
+        fn wl_proxy_marshal(proxy: *mut std::ffi::c_void, opcode: u32, ...);
+    }
+
+    extern "C" {
+        fn SDL_RaiseWindow(window: *mut std::ffi::c_void);
+        fn SDL_SetWindowInputFocus(window: *mut std::ffi::c_void);
+        fn SDL_SetWindowGrab(window: *mut std::ffi::c_void, grabbed: i32);
+        fn SDL_webOSCreateExportedWindow(kind: i32) -> *const c_char;
+        fn SDL_webOSSetExportedWindow(
+            window_id: *const c_char,
+            source: *const Rect,
+            destination: *const Rect,
+        ) -> i32;
+        fn SDL_webOSDestroyExportedWindow(window_id: *const c_char);
+    }
+
+    #[repr(C)]
+    pub struct Rect {
+        pub x: i32,
+        pub y: i32,
+        pub w: i32,
+        pub h: i32,
+    }
+
+    /// Ask the surface manager to route remote-control keys here.
+    ///
+    /// A freshly launched native app is the foreground app but its card is not
+    /// automatically the focused surface: `surface-manager` reports
+    /// `Focused none-group nor grabbed item` and drops every key press.
+    pub fn focus_window(window: *mut std::ffi::c_void) {
+        unsafe {
+            SDL_RaiseWindow(window);
+            SDL_SetWindowInputFocus(window);
+            SDL_SetWindowGrab(window, 1);
+        }
+    }
+
+    pub fn create_video_window() -> Option<String> {
+        let id = unsafe { SDL_webOSCreateExportedWindow(EXPORTED_TYPE_VIDEO) };
+        if id.is_null() {
+            return None;
+        }
+        Some(unsafe { CStr::from_ptr(id) }.to_string_lossy().into_owned())
+    }
+
+    pub fn place_video(window_id: &str, width: i32, height: i32) -> bool {
+        let Ok(window_id) = std::ffi::CString::new(window_id) else {
+            return false;
+        };
+        let source = Rect {
+            x: 0,
+            y: 0,
+            w: width,
+            h: height,
+        };
+        let destination = Rect {
+            x: 0,
+            y: 0,
+            w: 1920,
+            h: 1080,
+        };
+        unsafe { SDL_webOSSetExportedWindow(window_id.as_ptr(), &source, &destination) == 1 }
+    }
+
+    /// Allow the hardware video plane beneath the card window to show through.
+    ///
+    /// SDL marks its Wayland surface opaque, and the compositor then blends a
+    /// black card over the film. Clearing the opaque region is what the UI plane
+    /// needs; the commit is left to SDL's next swap. The SDL fork writes a
+    /// larger `SDL_SysWMinfo` than its headers declare, so the buffer is
+    /// deliberately oversized.
+    pub fn clear_opaque_region(window: *mut std::ffi::c_void) -> bool {
+        let mut info = [0u8; 512];
+        unsafe {
+            SDL_GetVersion(info.as_mut_ptr());
+            let ok = SDL_GetWindowWMInfo(window, info.as_mut_ptr() as *mut std::ffi::c_void);
+            let subsystem = i32::from_ne_bytes(info[4..8].try_into().unwrap());
+            if ok == 0 || subsystem != 6 {
+                return false;
+            }
+            let pointers = info.as_ptr().add(8) as *const *mut std::ffi::c_void;
+            let surface = pointers.add(1).read_unaligned();
+            if surface.is_null() {
+                return false;
+            }
+            // wl_surface.set_opaque_region(NULL) is opcode 4.
+            wl_proxy_marshal(surface, 4, std::ptr::null_mut::<std::ffi::c_void>());
+            true
+        }
+    }
+
+    pub fn destroy_video_window(window_id: &str) {
+        if let Ok(window_id) = std::ffi::CString::new(window_id) {
+            unsafe { SDL_webOSDestroyExportedWindow(window_id.as_ptr()) };
+        }
+    }
+}
 
 fn main() {
     if let Err(error) = run() {
@@ -304,7 +413,7 @@ fn write_live_screenshot_target(
             if let LiveEvent::Library(response) = &event {
                 queue_artwork(&live, response, &app.library);
             }
-            apply_live_event(&mut app, event);
+            apply_live_event(&mut app, event, &None);
         }
         if screen != Screen::Pair && !app.library.items.is_empty() {
             library_seen.get_or_insert_with(Instant::now);
@@ -618,38 +727,95 @@ fn run_live_window_target(target: ServerTarget, session_path: PathBuf) -> Result
     run_window_app(app, Some(live))
 }
 
+/// Translate the raw scancode webOS's SDL fork writes into `keycode`.
+///
+/// `SDL_GetKeyFromScancode` is not reliable on this fork because the event
+/// field already holds the scancode; the common remote keys are mapped
+/// explicitly and everything else falls back to the library's own translation.
+#[cfg(all(target_arch = "arm", target_os = "linux"))]
+fn normalize_remote_key(key: Keycode) -> Keycode {
+    match key.into_i32() {
+        20 => Keycode::Q,
+        40 => Keycode::Return,
+        41 => Keycode::Escape,
+        42 => Keycode::Backspace,
+        44 => Keycode::Space,
+        79 => Keycode::Right,
+        80 => Keycode::Left,
+        81 => Keycode::Down,
+        82 => Keycode::Up,
+        95 => Keycode::F11,
+        96 => Keycode::F12,
+        code => sdl2::keyboard::Scancode::from_i32(code)
+            .and_then(Keycode::from_scancode)
+            .unwrap_or(key),
+    }
+}
+
 fn run_window_app(mut app: App, live: Option<LiveClient>) -> Result<(), String> {
-    // LG's SDL fork needs this before SDL_Init to translate the remote's Back
-    // key into a normal SDL keyboard event. Other SDL builds ignore the hint.
+    // LG's SDL fork reads this environment variable (not the SDL hint) before
+    // SDL_Init and then delivers the remote's Back key instead of handing it to
+    // the system launcher. Other SDL builds ignore it.
+    std::env::set_var("SDL_WEBOS_ACCESS_POLICY_KEYS_BACK", "true");
     sdl2::hint::set("SDL_WEBOS_ACCESS_POLICY_KEYS_BACK", "1");
+    // The card window is the UI plane above the hardware video plane. Its EGL
+    // surface must carry alpha or the compositor sees an opaque black card and
+    // hides the film behind it.
+    sdl2::hint::set("SDL_VIDEO_EGL_ALLOW_TRANSPARENCY", "1");
     let sdl = sdl2::init()?;
     let video = sdl.video()?;
     #[allow(unused_mut)]
     let mut window = video
-        .window("ArchivePlayer — webOS native preview", 1280, 720)
+        .window("ArchivePlayer — webOS native preview", 1920, 1080)
         .position_centered()
         .resizable()
         .allow_highdpi()
         .build()
         .map_err(|error| error.to_string())?;
     #[cfg(all(target_arch = "arm", target_os = "linux"))]
-    if let Err(error) = window.set_fullscreen(FullscreenType::Desktop) {
-        eprintln!("fullscreen request failed: {error}");
+    {
+        if let Err(error) = window.set_fullscreen(FullscreenType::Desktop) {
+            eprintln!("fullscreen request failed: {error}");
+        }
+        webos::focus_window(window.raw() as *mut std::ffi::c_void);
     }
     let mut sdl_canvas = window
         .into_canvas()
         .build()
         .map_err(|error| error.to_string())?;
-    sdl_canvas
-        .set_logical_size(WIDTH, HEIGHT)
-        .map_err(|error| error.to_string())?;
+    // Window, renderer output, and texture are all 1920x1080 when the window
+    // type is fullscreen. A logical size equal to the output makes webOS 5's SDL
+    // 2.0.10 letterbox a 1280x720 crop, so leave it unset.
+    #[cfg(all(target_arch = "arm", target_os = "linux"))]
+    let _ = webos::clear_opaque_region(sdl_canvas.window().raw() as *mut std::ffi::c_void);
     let texture_creator = sdl_canvas.texture_creator();
+    // `Canvas` stores straight RGBA bytes. `ABGR8888` is the SDL name for
+    // that byte order (`A` in the high bit, `R` in the low byte); the more
+    // obvious `RGBA8888` is the opposite order and turned the whole UI red on
+    // webOS 5 by reading alpha as red.
     let mut texture = texture_creator
-        .create_texture_streaming(PixelFormatEnum::RGBA8888, WIDTH, HEIGHT)
+        .create_texture_streaming(PixelFormatEnum::ABGR8888, WIDTH, HEIGHT)
         .map_err(|error| error.to_string())?;
     texture.set_blend_mode(BlendMode::None);
     let mut event_pump = sdl.event_pump()?;
     let text_input = video.text_input();
+
+    #[allow(unused_mut)]
+    let mut video_player: Option<VideoPlayer> = None;
+    #[allow(unused_mut, unused_variables)]
+    let mut video_window: Option<String> = None;
+    #[cfg(all(target_arch = "arm", target_os = "linux"))]
+    {
+        let window_id = webos::create_video_window().unwrap_or_default();
+        if !window_id.is_empty() {
+            let _ = webos::place_video(&window_id, WIDTH as i32, HEIGHT as i32);
+            video_player = Some(VideoPlayer::start(
+                window_id.clone(),
+                "codes.loveless.archiveplayer".into(),
+            ));
+            video_window = Some(window_id);
+        }
+    }
 
     let mut frame_canvas = Canvas::new(WIDTH, HEIGHT)?;
     let mut last = Instant::now();
@@ -667,80 +833,97 @@ fn run_window_app(mut app: App, live: Option<LiveClient>) -> Result<(), String> 
                 }
                 Event::KeyDown {
                     keycode: Some(key), ..
-                } => match key {
-                    Keycode::Q if !app.search_editing => {
-                        if let Some(live) = &live {
-                            flush_progress(&mut progress, &app, live);
+                } => {
+                    // webOS's SDL fork puts the raw scancode in `keycode`
+                    // (Right is 79, Return 40) and leaves `scancode` empty.
+                    // Translate those back to ordinary SDLK values; the
+                    // private Back keycode (482) and normal host keycodes do
+                    // not resolve as scancodes and pass through unchanged.
+                    #[cfg(all(target_arch = "arm", target_os = "linux"))]
+                    let key = normalize_remote_key(key);
+                    match key {
+                        Keycode::Q if !app.search_editing => {
+                            if let Some(live) = &live {
+                                flush_progress(&mut progress, &app, live);
+                            }
+                            break 'running;
                         }
-                        break 'running;
-                    }
-                    Keycode::Escape => {
-                        if let Some(live) = &live {
-                            flush_progress(&mut progress, &app, live);
-                        }
-                        app.back();
-                    }
-                    Keycode::Backspace => {
-                        if app.search_editing {
-                            app.on_backspace();
-                        } else {
+                        // LG's SDL fork reports the remote's Back key as a private
+                        // keycode rather than SDLK_AC_BACK; 482 is what webOS 5
+                        // sends, 461 is the value seen on older builds.
+                        key if key == Keycode::Escape
+                            || key.into_i32() == 482
+                            || key.into_i32() == 461 =>
+                        {
                             if let Some(live) = &live {
                                 flush_progress(&mut progress, &app, live);
                             }
                             app.back();
                         }
+                        Keycode::Backspace => {
+                            if app.search_editing {
+                                app.on_backspace();
+                            } else {
+                                if let Some(live) = &live {
+                                    flush_progress(&mut progress, &app, live);
+                                }
+                                app.back();
+                            }
+                        }
+                        Keycode::Up => app.move_focus(archiveplayer_tv_ui::FocusMove::Up),
+                        Keycode::Down => app.move_focus(archiveplayer_tv_ui::FocusMove::Down),
+                        Keycode::Left => app.move_focus(archiveplayer_tv_ui::FocusMove::Left),
+                        Keycode::Right => app.move_focus(archiveplayer_tv_ui::FocusMove::Right),
+                        Keycode::Return | Keycode::KpEnter => {
+                            if let Some(live) = &live {
+                                flush_progress(&mut progress, &app, live);
+                            }
+                            let action = app.activate();
+                            if matches!(action, archiveplayer_webos::state::Action::Play(_)) {
+                                progress.reset();
+                            }
+                            if let Some(live) = &live {
+                                dispatch_action(live, &app, action);
+                            }
+                            act_on_video(&mut app, &video_player, action);
+                        }
+                        Keycode::Space if !app.search_editing => {
+                            if let Some(live) = &live {
+                                flush_progress(&mut progress, &app, live);
+                            }
+                            let action = app.activate();
+                            if matches!(action, archiveplayer_webos::state::Action::Play(_)) {
+                                progress.reset();
+                            }
+                            if let Some(live) = &live {
+                                dispatch_action(live, &app, action);
+                            }
+                            act_on_video(&mut app, &video_player, action);
+                        }
+                        Keycode::F11 => {
+                            let fullscreen = sdl_canvas.window().fullscreen_state();
+                            if fullscreen == FullscreenType::Off {
+                                sdl_canvas
+                                    .window_mut()
+                                    .set_fullscreen(FullscreenType::Desktop)
+                                    .map_err(|error| error.to_string())?;
+                            } else {
+                                sdl_canvas
+                                    .window_mut()
+                                    .set_fullscreen(FullscreenType::Off)
+                                    .map_err(|error| error.to_string())?;
+                            }
+                        }
+                        Keycode::F12 => {
+                            let path = PathBuf::from("screenshot.png");
+                            let mut shot = Canvas::new(WIDTH, HEIGHT)?;
+                            render::render(&app, &mut shot);
+                            shot.save_png(&path)?;
+                            println!("wrote {}", path.display());
+                        }
+                        _ => {}
                     }
-                    Keycode::Up => app.move_focus(archiveplayer_tv_ui::FocusMove::Up),
-                    Keycode::Down => app.move_focus(archiveplayer_tv_ui::FocusMove::Down),
-                    Keycode::Left => app.move_focus(archiveplayer_tv_ui::FocusMove::Left),
-                    Keycode::Right => app.move_focus(archiveplayer_tv_ui::FocusMove::Right),
-                    Keycode::Return | Keycode::KpEnter => {
-                        if let Some(live) = &live {
-                            flush_progress(&mut progress, &app, live);
-                        }
-                        let action = app.activate();
-                        if matches!(action, archiveplayer_webos::state::Action::Play(_)) {
-                            progress.reset();
-                        }
-                        if let Some(live) = &live {
-                            dispatch_action(live, &app, action);
-                        }
-                    }
-                    Keycode::Space if !app.search_editing => {
-                        if let Some(live) = &live {
-                            flush_progress(&mut progress, &app, live);
-                        }
-                        let action = app.activate();
-                        if matches!(action, archiveplayer_webos::state::Action::Play(_)) {
-                            progress.reset();
-                        }
-                        if let Some(live) = &live {
-                            dispatch_action(live, &app, action);
-                        }
-                    }
-                    Keycode::F11 => {
-                        let fullscreen = sdl_canvas.window().fullscreen_state();
-                        if fullscreen == FullscreenType::Off {
-                            sdl_canvas
-                                .window_mut()
-                                .set_fullscreen(FullscreenType::Desktop)
-                                .map_err(|error| error.to_string())?;
-                        } else {
-                            sdl_canvas
-                                .window_mut()
-                                .set_fullscreen(FullscreenType::Off)
-                                .map_err(|error| error.to_string())?;
-                        }
-                    }
-                    Keycode::F12 => {
-                        let path = PathBuf::from("screenshot.png");
-                        let mut shot = Canvas::new(WIDTH, HEIGHT)?;
-                        render::render(&app, &mut shot);
-                        shot.save_png(&path)?;
-                        println!("wrote {}", path.display());
-                    }
-                    _ => {}
-                },
+                }
                 Event::TextInput { text, .. } => app.on_text(&text),
                 _ => {}
             }
@@ -760,8 +943,43 @@ fn run_window_app(mut app: App, live: Option<LiveClient>) -> Result<(), String> 
                 if let LiveEvent::Library(response) = &event {
                     queue_artwork(live, response, &app.library);
                 }
-                apply_live_event(&mut app, event);
+                apply_live_event(&mut app, event, &video_player);
             }
+        }
+
+        if let Some(player) = &video_player {
+            for event in player.poll() {
+                match event {
+                    VideoEvent::Loaded => {}
+                    VideoEvent::Position(position) => {
+                        app.player_position = position.clamp(0.0, app.player_duration.max(1.0));
+                    }
+                    VideoEvent::Playing(playing) => app.player_playing = playing,
+                    VideoEvent::Ended => {
+                        app.player_playing = false;
+                        app.player_position = app.player_duration;
+                    }
+                    VideoEvent::VideoSize(width, height) => {
+                        #[cfg(all(target_arch = "arm", target_os = "linux"))]
+                        if let Some(window_id) = &video_window {
+                            let _ = webos::place_video(window_id, width as i32, height as i32);
+                        }
+                        #[cfg(not(all(target_arch = "arm", target_os = "linux")))]
+                        let _ = (width, height);
+                    }
+                    VideoEvent::Failed(message) => {
+                        app.video_active = false;
+                        app.player_playing = false;
+                        app.show_toast(format!("Playback failed: {message}"));
+                    }
+                }
+            }
+        }
+        if app.screen != Screen::Player && app.video_active {
+            if let Some(player) = &video_player {
+                player.stop();
+            }
+            app.video_active = false;
         }
 
         let now = Instant::now();
@@ -777,11 +995,88 @@ fn run_window_app(mut app: App, live: Option<LiveClient>) -> Result<(), String> 
         sdl_canvas
             .copy(&texture, None, None)
             .map_err(|error| error.to_string())?;
+        #[cfg(all(target_arch = "arm", target_os = "linux"))]
+        if app.video_active {
+            // SDL's swap re-asserts the surface's opaque region on this firmware;
+            // clear it on every frame that must show the video plane beneath.
+            let _ = webos::clear_opaque_region(sdl_canvas.window().raw() as *mut std::ffi::c_void);
+        }
         sdl_canvas.present();
+        #[cfg(all(target_arch = "arm", target_os = "linux"))]
+        if app.frame == 1 || app.frame == 60 {
+            // The surface is mapped by the first present; asking before that
+            // is accepted by SDL but the compositor has no item to focus yet.
+            webos::focus_window(sdl_canvas.window().raw() as *mut std::ffi::c_void);
+        }
         std::thread::sleep(Duration::from_millis(16));
     }
 
+    if let Some(player) = &video_player {
+        player.stop();
+    }
+    drop(video_player);
+    #[cfg(all(target_arch = "arm", target_os = "linux"))]
+    if let Some(window_id) = &video_window {
+        webos::destroy_video_window(window_id);
+    }
+
     Ok(())
+}
+
+/// Start the media pipeline for the selected title when the server supplied a
+/// compatible plan. The player's fake clock stays off while it runs.
+fn start_video(app: &mut App, video_player: &Option<VideoPlayer>) {
+    if app.video_active || app.screen != Screen::Player {
+        return;
+    }
+    let Some(player) = video_player else {
+        return;
+    };
+    let Some(plan) = app
+        .library
+        .item(app.selected)
+        .playback_plan
+        .as_ref()
+        .filter(|plan| plan.compatible)
+        .filter(|plan| !plan.url.is_empty())
+    else {
+        return;
+    };
+    if let Some(length) = plan.length_seconds.filter(|length| *length > 0.0) {
+        app.player_duration = length;
+        app.player_position = app.player_position.clamp(0.0, length);
+    }
+    player.load(plan.url.clone(), app.player_position);
+    app.video_active = true;
+    app.player_playing = true;
+}
+
+/// Mirror an action that already changed the fake state onto the real pipeline.
+fn act_on_video(
+    app: &mut App,
+    video_player: &Option<VideoPlayer>,
+    action: archiveplayer_webos::state::Action,
+) {
+    use archiveplayer_webos::state::Action;
+    let Some(player) = video_player else {
+        return;
+    };
+    match action {
+        Action::Play(_) => start_video(app, video_player),
+        Action::TogglePlay if app.video_active => {
+            if app.player_playing {
+                player.play();
+            } else {
+                player.pause();
+            }
+        }
+        Action::Seek(_) if app.video_active => player.seek(app.player_position),
+        Action::Back if app.video_active => {
+            player.stop();
+            app.video_active = false;
+        }
+        _ => {}
+    }
 }
 
 fn queue_artwork(
@@ -902,7 +1197,7 @@ fn dispatch_action(live: &LiveClient, app: &App, action: archiveplayer_webos::st
     }
 }
 
-fn apply_live_event(app: &mut App, event: LiveEvent) {
+fn apply_live_event(app: &mut App, event: LiveEvent, video_player: &Option<VideoPlayer>) {
     match event {
         LiveEvent::Status(message) => app.show_toast(message),
         LiveEvent::Connected {
@@ -992,6 +1287,8 @@ fn apply_live_event(app: &mut App, event: LiveEvent) {
                     app.focus_index = 1;
                 }
                 app.show_toast(reason);
+            } else if app.screen == Screen::Player {
+                start_video(app, video_player);
             }
         }
         LiveEvent::Poster { identifier, image } => {

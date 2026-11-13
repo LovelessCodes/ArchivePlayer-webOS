@@ -79,6 +79,9 @@ pub struct App {
     pub player_position: f64,
     pub player_duration: f64,
     pub player_playing: bool,
+    /// True while a real media pipeline owns the video plane. The fake clock
+    /// stops advancing and the player screen becomes a transparent overlay.
+    pub video_active: bool,
     pub paired: bool,
     pub live: bool,
     pub server_name: String,
@@ -121,6 +124,7 @@ impl App {
             player_position: player_position as f64,
             player_duration: player_duration.max(1) as f64,
             player_playing: false,
+            video_active: false,
             paired: true,
             live: false,
             server_name: "Living room".into(),
@@ -229,6 +233,7 @@ impl App {
             player_position: 0.0,
             player_duration: 1.0,
             player_playing: false,
+            video_active: false,
             paired: false,
             live: true,
             server_name: server_name.into(),
@@ -746,7 +751,7 @@ impl App {
                 self.toast = None;
             }
         }
-        if self.screen == Screen::Player && self.player_playing {
+        if self.screen == Screen::Player && self.player_playing && !self.video_active {
             self.player_position += seconds;
             if self.player_position >= self.player_duration {
                 self.player_position = self.player_duration;

@@ -12,6 +12,7 @@ pub mod poster;
 pub mod progress;
 pub mod render;
 pub mod state;
+pub mod video;
 
 pub use live::{LiveClient, LiveCommand, LiveEvent, PairingView};
 pub use pairing::{PairingFlow, PairingPoll};

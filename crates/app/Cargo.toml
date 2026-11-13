@@ -15,3 +15,4 @@ archiveplayer-tv-protocol = { path = "../protocol" }
 archiveplayer-tv-ui = { path = "../ui" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 qrcodegen = "1.8"
+serde_json.workspace = true

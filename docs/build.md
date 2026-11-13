@@ -108,17 +108,17 @@ The manifest is generated from `pkg/appinfo.json`:
 ```json
 {
   "id": "codes.loveless.archiveplayer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "native",
   "title": "ArchivePlayer",
   "appDescription": "Native ArchivePlayer client for LG webOS",
   "iconUri": "https://raw.githubusercontent.com/LovelessCodes/ArchivePlayer-webOS/main/pkg/icon.png",
   "sourceUrl": "https://github.com/LovelessCodes/ArchivePlayer-webOS",
   "rootRequired": false,
-  "ipkUrl": "codes.loveless.archiveplayer_0.1.0_arm.ipk",
+  "ipkUrl": "codes.loveless.archiveplayer_0.2.0_arm.ipk",
   "ipkHash": { "sha256": "…" },
-  "ipkSize": 3307378,
-  "installedSize": 6386101
+  "ipkSize": 3350802,
+  "installedSize": 6513158
 }
 ```
 
@@ -133,8 +133,8 @@ control file, `packageinfo.json`, the filename, and the git tag must agree.
 Only `pkg/appinfo.json` carries the version. Change it, commit, and push a tag:
 
 ```sh
-git tag webos-v0.1.1
-git push origin webos-v0.1.1
+git tag webos-v0.2.0
+git push origin webos-v0.2.0
 ```
 
 `.github/workflows/release.yml` downloads and verifies the pinned NDK, builds
@@ -160,7 +160,7 @@ resolving and the Homebrew manifest URL would break.
 3. Install with the webOS CLI or the Homebrew Channel:
 
    ```sh
-   ares-install -d <tv> codes.loveless.archiveplayer_0.1.0_arm.ipk
+   ares-install -d <tv> codes.loveless.archiveplayer_0.2.0_arm.ipk
    ares-launch -d <tv> codes.loveless.archiveplayer
    ```
 

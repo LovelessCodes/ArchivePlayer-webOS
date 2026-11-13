@@ -1,6 +1,6 @@
 {
   "id": "codes.loveless.archiveplayer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "vendor": "LovelessCodes",
   "type": "native",
   "main": "archiveplayer-webos",
@@ -12,5 +12,9 @@
   "splashBackground": "splash.png",
   "nativeLifeCycleInterfaceVersion": 2,
   "handlesRelaunch": true,
-  "transparent": true
+  "transparent": true,
+  "defaultWindowType": "fullscreen",
+  "requiredPermissions": [
+    "media"
+  ]
 }

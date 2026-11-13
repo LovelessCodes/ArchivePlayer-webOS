@@ -1,10 +1,14 @@
 /*
  * MIT License — Copyright (c) 2026 LovelessCodes
  *
- * webOS ships glibc 2.12, which predates getauxval(). Rust's standard
+ * webOS 5 ships glibc 2.12, which predates getauxval(). Rust's standard
  * library and ring call it for HWCAP and stack-size detection, so an ARM
  * build fails to link without this fallback. Read the auxiliary vector the
  * same way glibc does, from /proc/self/auxv, and keep the result cached.
+ *
+ * The same file carries two device-compatibility shims for symbols that are
+ * newer than the firmware libraries. They are compiled for the ARM target
+ * only.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -73,4 +77,16 @@ unsigned long getauxval(unsigned long key)
     }
     errno = ENOENT;
     return 0;
+}
+
+
+/*
+ * sdl2 0.37's Window destructor calls SDL_Metal_DestroyView unconditionally,
+ * even though this client never creates a Metal view. webOS 5's SDL2 2.0.10
+ * predates that Apple-only symbol, so the dynamic linker aborts the process
+ * at startup. Provide a no-op symbol in the executable.
+ */
+void SDL_Metal_DestroyView(void *view)
+{
+    (void)view;
 }
