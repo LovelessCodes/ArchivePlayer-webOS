@@ -16,7 +16,6 @@ edition = "2021"
 license = "MIT"
 repository = "https://github.com/LovelessCodes/ArchivePlayer-webOS"
 rust-version = "1.85"
-authors = ["ArchivePlayer contributors"]
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
