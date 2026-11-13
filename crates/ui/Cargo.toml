@@ -1,8 +1,11 @@
 [package]
 name = "archiveplayer-tv-ui"
-description = "Screen and focus model for the 10-foot UI"
+description = "Screen, theme, and focus model for the 10-foot UI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+[dependencies]
+archiveplayer-tv-gfx = { path = "../gfx" }

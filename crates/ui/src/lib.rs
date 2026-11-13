@@ -1,9 +1,13 @@
 //! Platform-independent UI scaffolding.
 //!
-//! The renderer and SDL layer will consume this model; keeping focus logic here
-//! makes it testable without a television or GLES context.
+//! The renderer and SDL layer consume this model; keeping focus and theme here
+//! makes them testable without a television or GLES context.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub mod theme;
+
+use archiveplayer_tv_gfx::Rect;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Screen {
     Pair,
     Home,
@@ -22,8 +26,8 @@ pub enum FocusMove {
     Right,
 }
 
-/// A simple row-major focus grid. Screens with irregular layouts can own their
-/// own geometry later; this covers posters, episode lists, and settings rows.
+/// A simple row-major focus grid. Screens with irregular layouts use
+/// [`navigate`] instead; this covers posters, episode lists, and settings rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FocusGrid {
     columns: usize,
@@ -83,6 +87,49 @@ impl FocusGrid {
     }
 }
 
+/// Pick the nearest focusable rectangle in a direction.
+///
+/// This is deliberately geometric rather than grid-based: the home screen,
+/// sidebar, and player controls do not share a column count. Candidates must be
+/// at least partly in the requested direction, and the perpendicular distance
+/// is weighted so a same-row neighbour wins over a diagonal one.
+pub fn navigate(rects: &[Rect], current: usize, direction: FocusMove) -> usize {
+    if rects.is_empty() || current >= rects.len() {
+        return current;
+    }
+    let source = rects[current];
+    let (sx, sy) = source.center();
+    let mut best: Option<(usize, f32)> = None;
+    for (index, rect) in rects.iter().enumerate() {
+        if index == current {
+            continue;
+        }
+        let (cx, cy) = rect.center();
+        let dx = cx - sx;
+        let dy = cy - sy;
+        let (primary, secondary) = match direction {
+            FocusMove::Right if dx > 8 => (dx as f32, dy.abs() as f32),
+            FocusMove::Left if dx < -8 => ((-dx) as f32, dy.abs() as f32),
+            FocusMove::Down if dy > 8 => (dy as f32, dx.abs() as f32),
+            FocusMove::Up if dy < -8 => ((-dy) as f32, dx.abs() as f32),
+            _ => continue,
+        };
+        // Prefer rectangles that overlap the source on the perpendicular axis.
+        let overlap = match direction {
+            FocusMove::Left | FocusMove::Right => {
+                source.y < rect.bottom() && source.bottom() > rect.y
+            }
+            FocusMove::Up | FocusMove::Down => source.x < rect.right() && source.right() > rect.x,
+        };
+        let overlap_penalty = if overlap { 0.0 } else { 240.0 };
+        let score = primary + secondary * 2.5 + overlap_penalty;
+        if best.map(|(_, best)| score < best).unwrap_or(true) {
+            best = Some((index, score));
+        }
+    }
+    best.map(|(index, _)| index).unwrap_or(current)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +161,26 @@ mod tests {
         assert_eq!(grid.index(), 0);
         grid.mv(FocusMove::Down);
         assert_eq!(grid.index(), 0);
+    }
+
+    #[test]
+    fn spatial_navigation_prefers_the_same_row() {
+        let rects = [
+            Rect::new(0, 0, 100, 100),
+            Rect::new(140, 0, 100, 100),
+            Rect::new(140, 180, 100, 100),
+            Rect::new(0, 180, 100, 100),
+        ];
+        assert_eq!(navigate(&rects, 0, FocusMove::Right), 1);
+        assert_eq!(navigate(&rects, 1, FocusMove::Down), 2);
+        assert_eq!(navigate(&rects, 2, FocusMove::Left), 3);
+        assert_eq!(navigate(&rects, 3, FocusMove::Up), 0);
+    }
+
+    #[test]
+    fn spatial_navigation_reaches_the_sidebar() {
+        let rects = [Rect::new(24, 180, 184, 56), Rect::new(280, 132, 900, 420)];
+        assert_eq!(navigate(&rects, 1, FocusMove::Left), 0);
+        assert_eq!(navigate(&rects, 0, FocusMove::Right), 1);
     }
 }

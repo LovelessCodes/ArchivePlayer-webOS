@@ -4,18 +4,20 @@
 
 ```text
 ┌──────────────────────────────────────────────┐
-│ app: SDL event loop, screen state, playback   │
-│      ownership, worker-thread result handoff │
+│ sim: SDL2 window, texture upload, screenshots │
 ├──────────────────────────────────────────────┤
-│ ui: screen ids, focus grid, layout intents   │
-│ gfx: Rect/Color, later GLES2 batching        │
+│ app: screen state, focus targets, actions,    │
+│      demo catalogue, software screen drawing  │
 ├──────────────────────────────────────────────┤
-│ api: blocking ureq client, URL policy,       │
-│      ServerTarget/StoredSession              │
+│ ui: screens, theme, spatial focus navigation  │
+│ gfx: software canvas, type, geometry, PNG     │
 ├──────────────────────────────────────────────┤
-│ protocol: serde wire types only              │
+│ api: blocking ureq client, URL policy,        │
+│      ServerTarget/StoredSession               │
 ├──────────────────────────────────────────────┤
-│ platform: secret store, mDNS discovery       │
+│ protocol: serde wire types only               │
+├──────────────────────────────────────────────┤
+│ platform: secret store, mDNS discovery        │
 └──────────────────────────────────────────────┘
 ```
 
@@ -24,13 +26,28 @@ a host simulator and the television build. `api` is synchronous on purpose: a
 native render loop does not benefit from a nested async runtime, and `ureq` keeps
 the ARMv7 `DT_NEEDED` list small.
 
+## Rendering
+
+The screen tree is laid out in a fixed 1920×1080 logical space. `gfx::Canvas`
+owns an RGBA pixmap, draws rounded shapes and gradients, rasterizes Inter glyphs
+with `fontdue`, and can save a PNG. The host simulator uploads that pixmap to an
+SDL2 streaming texture, scaled into a resizable window. This keeps the visual
+design testable on a normal machine and leaves the screen code unchanged when the
+GLES2 backend arrives.
+
+Screen geometry lives in `app::layout`, and actions live in `app::state`.
+`App::targets()` returns the focusable rectangles for the current screen, so the
+highlight and the action can never point at different places. Navigation uses a
+spatial nearest-neighbour search in `ui::navigate`; a simple row-major
+`FocusGrid` remains available for dense lists.
+
 ## Threading
 
-- **UI/render thread** owns SDL, the GLES2 context, the focus tree, and all
-  screen state. It never blocks on the network.
-- **API worker** performs one request at a time on a `std::thread`, then posts a
-  `Result<Response, ApiError>` back through a channel. The render loop drains
-  results at the start of a frame.
+- **UI/render thread** owns SDL, the window, the focus tree, and all screen
+  state. It never blocks on the network.
+- **API worker** (next milestone) performs one request at a time on a
+  `std::thread`, then posts a `Result<Response, ApiError>` back through a
+  channel. The render loop drains results at the start of a frame.
 - **Playback position** is read from `com.webos.media` on a timer; progress is
   written from the API worker every 15 seconds, on pause, and on stop.
 - No `tokio`, no `async-std`, no WebView, no JavaScript.
@@ -91,8 +108,17 @@ set; if a file is not directly playable the plan should say so.
   app data directory with mode `0600`; `MemorySecretStore` is for tests.
 - `ServerDiscovery`: browse `_archiveplayer._tcp.local`, read the `name`, `id`,
   `api`, `version`, `path`, and `url` TXT records. The host build uses a no-op.
-- `Screen`/`FocusGrid`: row-major focus for posters, episode lists, and settings.
-  Irregular layouts can keep their own geometry and reuse the movement rules.
+- `Screen`/`navigate`: spatial focus for the home hero, sidebar, poster grids,
+  episode lists, and player controls. `FocusGrid` remains for dense rows.
+
+## Host simulator
+
+`crates/sim` is the only crate that links SDL2. It has two modes:
+
+- Windowed: render, upload the RGBA texture, drain keyboard events, and tick the
+  player. F11 toggles fullscreen; F12 writes a screenshot.
+- Headless: `--all` or `--screenshot` renders deterministic screens to PNG
+  without initializing video, so CI and screenshots work over SSH.
 
 ## Error handling
 

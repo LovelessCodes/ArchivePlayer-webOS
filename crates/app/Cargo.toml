@@ -13,3 +13,4 @@ archiveplayer-tv-gfx = { path = "../gfx" }
 archiveplayer-tv-platform = { path = "../platform" }
 archiveplayer-tv-protocol = { path = "../protocol" }
 archiveplayer-tv-ui = { path = "../ui" }
+qrcodegen = "1.8"

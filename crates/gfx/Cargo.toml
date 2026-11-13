@@ -1,8 +1,12 @@
 [package]
 name = "archiveplayer-tv-gfx"
-description = "Geometry and color types for the GLES2 renderer"
+description = "Software canvas and geometry for the native TV UI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+[dependencies]
+fontdue = "0.9"
+tiny-skia = "0.11"

@@ -18,6 +18,10 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: swatinem/rust-cache@v2
+      - name: Install SDL2
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Render a smoke-test screenshot
+        run: cargo run -p archiveplayer-webos-sim -- --screenshot /tmp/home.png --screen home

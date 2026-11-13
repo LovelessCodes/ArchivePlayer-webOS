@@ -12,3 +12,6 @@ Modifications Copyright (c) 2026 ArchivePlayer contributors
 This client is an independent implementation of the documented ArchivePlayer
 HTTP contract. It is not affiliated with or endorsed by LG Electronics or the
 Internet Archive. Archive.org content remains subject to its own terms.
+
+Bundled font: Inter, Copyright (c) The Inter Project Authors,
+licensed under the SIL Open Font License 1.1. See assets/fonts/LICENSE.txt.

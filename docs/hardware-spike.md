@@ -1,7 +1,8 @@
 # First hardware spike
 
-Do this on one real webOS 5+ television before building the full UI. A green
-host build proves nothing about the video plane, frame pacing, or the remote.
+Do this on one real webOS 5+ television before porting the host UI to GLES2 or
+trusting the playback path. A green host build proves nothing about the video
+plane, frame pacing, or the remote.
 
 ## Acceptance criteria
 
@@ -34,6 +35,7 @@ host build proves nothing about the video plane, frame pacing, or the remote.
 
 ## After the spike
 
-Only then implement the screen tree, pairing, library, and detail screens. The
-spike's media wrapper should become the only module that knows about
-`com.webos.media`.
+Port the existing `app::render` screens to a GLES2 backend, wire the real API and
+pairing flow, and keep the spike's media wrapper as the only module that knows
+about `com.webos.media`. The host simulator remains the fast feedback loop for
+layout and focus changes.

@@ -1,6 +1,6 @@
 CARGO ?= cargo
 
-.PHONY: check fmt clippy test run ipk
+.PHONY: check fmt clippy test run sim screenshots ipk
 
 check: fmt clippy test
 
@@ -13,8 +13,13 @@ clippy:
 test:
 	$(CARGO) test --workspace
 
-run:
-	$(CARGO) run -p archiveplayer-webos
+run: sim
+
+sim:
+	$(CARGO) run -p archiveplayer-webos-sim
+
+screenshots:
+	$(CARGO) run -p archiveplayer-webos-sim -- --all docs/screenshots
 
 # The native package step needs the webOS NDK and a cross-built binary. Keep the
 # failure explicit instead of producing a host x86_64 .ipk that cannot run.

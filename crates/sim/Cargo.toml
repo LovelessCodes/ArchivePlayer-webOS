@@ -1,0 +1,14 @@
+[package]
+name = "archiveplayer-webos-sim"
+description = "Host SDL2 simulator and screenshot renderer for the webOS UI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+archiveplayer-tv-gfx = { path = "../gfx" }
+archiveplayer-tv-ui = { path = "../ui" }
+archiveplayer-webos = { path = "../app" }
+sdl2 = "0.37"

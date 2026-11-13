@@ -1,15 +1,21 @@
 # ArchivePlayer for webOS
 
 A native LG webOS client for [ArchivePlayer](https://github.com/LovelessCodes/ArchivePlayer),
-the self-hosted Archive.org media library. It draws its own UI with SDL2 + GLES2,
+the self-hosted Archive.org media library. It draws its own 10-foot UI with SDL2,
 talks to the server over the documented HTTP API, and (in the next milestone)
 hands Archive.org MP4s to the television's own media pipeline. No Chromium, no
 WebView, no JavaScript runtime.
 
-> **Status: scaffold.** The API client, platform seams, and host-testable UI
-> model compile today. The SDL/GLES screen tree, pairing screen, and
-> `com.webos.media` playback path are the next milestone. This repository is not
-> yet installable on a television.
+> **Status: host preview.** The native UI, focus model, demo catalogue, QR
+> pairing screen, API client, and platform seams compile and run today. The
+> webOS GLES2 backend and `com.webos.media` playback path still need a hardware
+> spike, and this repository is not yet installable on a television.
+
+![ArchivePlayer webOS home screen](docs/screenshots/home.png)
+
+The simulator renders the same 1920×1080 canvas the television will use:
+seven screens, spatial D-pad focus, a real QR code for activation, and a
+deterministic screenshot mode that runs without a display.
 
 ## Why a separate repository
 
@@ -34,9 +40,13 @@ WebView, no JavaScript runtime.
 | Playback-plan support (`platform=webos`, `file=...`) | Done |
 | Startup state machine (`Setup → Pairing → Ready → Pairing` on 401) | Done |
 | Token store: private file / memory | Done |
+| 1920×1080 software canvas + type rendering | Done |
+| SDL2 host window, D-pad focus, seven screens | Done |
+| Demo library, search, detail, player, settings | Done |
+| Pairing screen with a real QR code | Done (demo approval) |
+| Real pairing flow wired to the UI | Not yet |
 | mDNS `_archiveplayer._tcp` discovery | Interface only |
-| SDL2 window, GLES2 renderer, focus tree | Not yet |
-| `com.webos.media` playback and overlay | Not yet |
+| GLES2 renderer and `com.webos.media` playback | Not yet |
 | `.ipk` packaging and device install | Not yet |
 
 ## Layout
@@ -45,17 +55,37 @@ WebView, no JavaScript runtime.
 crates/protocol/   serde DTOs for the server API, no I/O
 crates/api/        blocking ureq client, URL policy, server targets, sessions
 crates/platform/   secret-store and discovery traits + host implementations
-crates/ui/         screen ids and row-major focus model
-crates/gfx/        renderer-independent Rect/Color types
-crates/app/        startup state machine and the future event loop
+crates/ui/         screens, theme, spatial focus navigation
+crates/gfx/        software canvas, text, geometry, PNG output
+crates/app/        startup state, demo catalogue, screen state and renderer
+crates/sim/        SDL2 host window + headless screenshot renderer
+assets/fonts/      bundled Inter (SIL OFL; see assets/fonts/LICENSE.txt)
 pkg/               webOS appinfo and icons
 docs/              architecture, build, protocol notes
 ```
 
-## Host check
+## Host preview
 
-The scaffold builds and tests on an ordinary x86_64 machine; it does not need
-the webOS NDK until the native shell lands.
+The host build needs SDL2 (`libsdl2-dev` on Debian/Ubuntu) but not the webOS
+NDK:
+
+```sh
+sudo apt-get install libsdl2-dev
+cargo run -p archiveplayer-webos-sim
+```
+
+Keys: arrows move focus, Enter activates, Esc goes back, Space toggles playback
+on the player screen, Q quits, F11 toggles fullscreen, and F12 writes
+`screenshot.png`.
+
+Rendered screenshots can be produced without a display:
+
+```sh
+cargo run -p archiveplayer-webos-sim -- --all docs/screenshots
+cargo run -p archiveplayer-webos-sim -- --screenshot home.png --screen home
+```
+
+Checks:
 
 ```sh
 cargo fmt --all --check
@@ -93,14 +123,29 @@ silicon) or an **arm64** Linux host, install the NDK and the
 1. Hardware spike on one webOS 5+ television: SDL2 EGL/GLES2 context, D-pad
    events, background/foreground lifecycle, exported window, and an Archive.org
    MP4 through `com.webos.media`.
-2. Screen tree and poster/text renderer with fake data.
-3. Pairing screen with QR, code entry, and secure token storage.
-4. Library, search, detail, and player screens against the real API.
-5. Progress every 15 s, on pause, and on stop; completed at end.
-6. mDNS discovery, Homebrew manifest, unsigned `.ipk` release.
+2. Replace the demo catalogue with the real API: pairing poll, token store, and
+   library/search/detail loading on a worker thread.
+3. Add the webOS GLES2 backend and `com.webos.media` player, keeping the same
+   screen state and draw calls.
+4. Progress every 15 s, on pause, and on stop; completed at end.
+5. mDNS discovery, Homebrew manifest, unsigned `.ipk` release.
 
 See [docs/architecture.md](docs/architecture.md) for the design and
 [docs/protocol.md](docs/protocol.md) for the API surface this client uses.
+
+## Screens
+
+| Home | Library |
+| --- | --- |
+| ![Home](docs/screenshots/home.png) | ![Library](docs/screenshots/library.png) |
+
+| Detail | Search |
+| --- | --- |
+| ![Detail](docs/screenshots/detail.png) | ![Search](docs/screenshots/search.png) |
+
+| Pairing | Player |
+| --- | --- |
+| ![Pairing](docs/screenshots/pair.png) | ![Player](docs/screenshots/player.png) |
 
 ## Attribution
 

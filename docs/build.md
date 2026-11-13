@@ -1,16 +1,22 @@
 # Building
 
-## Host check
+## Host check and simulator
 
-This works on x86_64 Linux, macOS, and Windows:
+The UI can be developed on x86_64 Linux, macOS, and Windows. SDL2 is needed only
+for the windowed simulator; the headless screenshot mode does not initialize
+video.
 
 ```sh
+sudo apt-get install libsdl2-dev      # Debian/Ubuntu
+cargo run -p archiveplayer-webos-sim
+cargo run -p archiveplayer-webos-sim -- --all docs/screenshots
+
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-The host check does not build an `.ipk` and does not need SDL or the webOS NDK.
+The host check does not build an `.ipk` and does not need the webOS NDK.
 
 ## Native prerequisites
 
@@ -76,4 +82,6 @@ untrusted mirror.
 
 The first hardware milestone is deliberately small: launch, focus events, one
 animated quad, a frame-time overlay, and one Archive.org MP4 through
-`com.webos.media`. Do not build the full UI before that spike passes.
+`com.webos.media`. The full screen design can be developed against the host
+simulator meanwhile, but do not port it to GLES2 until the spike proves the
+window-export and key-event path.

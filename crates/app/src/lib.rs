@@ -1,7 +1,15 @@
-//! Native webOS application scaffold.
+//! Native ArchivePlayer client for LG webOS.
 //!
-//! The UI/render/playback loop is intentionally not implemented yet. This crate
-//! owns the startup state machine that the SDL event loop will drive.
+//! This crate owns the startup state machine, demo catalogue, screen state, and
+//! software-rendered 10-foot UI. The host simulator drives it with SDL2; the
+//! webOS shell can drive the same state with its ARMv7 SDL2 build.
+
+pub mod demo;
+pub mod layout;
+pub mod render;
+pub mod state;
+
+pub use state::{Action, App, FocusTarget};
 
 use archiveplayer_tv_api::{ServerTarget, StoredSession};
 
@@ -89,5 +97,98 @@ mod tests {
                 target: Some(ref target)
             } if target.id == "id"
         ));
+    }
+}
+
+#[cfg(test)]
+mod ui_tests {
+    use super::*;
+    use archiveplayer_tv_ui::Screen;
+
+    #[test]
+    fn home_targets_cover_hero_and_rails() {
+        let app = App::demo();
+        let targets = app.targets();
+        assert!(targets.len() >= 9);
+        assert!(targets
+            .iter()
+            .any(|target| target.action == Action::Play(0)));
+        assert!(targets
+            .iter()
+            .any(|target| target.action == Action::Go(Screen::Library)));
+    }
+
+    #[test]
+    fn detail_targets_expose_episodes_for_series() {
+        let mut app = App::demo();
+        app.selected = 5;
+        app.set_screen(Screen::Detail);
+        let targets = app.targets();
+        assert!(targets.iter().any(|target| target.action == Action::Back));
+        assert!(
+            targets
+                .iter()
+                .filter(|target| target.action == Action::Play(5))
+                .count()
+                >= 2
+        );
+    }
+
+    #[test]
+    fn search_filters_the_catalogue() {
+        let mut app = App::demo();
+        app.search_query = "nosferatu".into();
+        assert_eq!(app.search_results(), vec![2]);
+        app.search_query = "noir".into();
+        assert!(app.search_results().contains(&10));
+    }
+    #[test]
+    fn spatial_focus_moves_from_hero_to_buttons() {
+        let mut app = App::demo();
+        app.focus_index = 4;
+        app.move_focus(archiveplayer_tv_ui::FocusMove::Right);
+        assert_eq!(app.focus_index, 5);
+        app.activate();
+        assert_eq!(app.screen, Screen::Detail);
+        assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn library_activation_opens_the_selected_title() {
+        let mut app = App::demo();
+        app.screen = Screen::Library;
+        app.focus_index = 10;
+        app.activate();
+        assert_eq!(app.screen, Screen::Detail);
+        assert_eq!(app.selected, 0);
+        app.back();
+        assert_eq!(app.screen, Screen::Library);
+    }
+
+    #[test]
+    fn search_text_edits_and_backspace_removes() {
+        let mut app = App::demo();
+        app.screen = Screen::Search;
+        app.search_editing = true;
+        app.on_text("nosf");
+        assert_eq!(app.search_query, "nosf");
+        app.on_backspace();
+        assert_eq!(app.search_query, "nos");
+        app.search_editing = false;
+        app.back();
+        assert_eq!(app.screen, Screen::Home);
+    }
+
+    #[test]
+    fn player_tick_advances_and_stops_at_the_end() {
+        let mut app = App::demo();
+        app.selected = 0;
+        app.screen = Screen::Player;
+        app.player_position = 5758.0;
+        app.player_duration = 5760.0;
+        app.player_playing = true;
+        app.tick(5.0);
+        assert_eq!(app.player_position, 5760.0);
+        assert!(!app.player_playing);
     }
 }
