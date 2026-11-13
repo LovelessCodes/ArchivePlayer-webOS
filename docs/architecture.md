@@ -139,6 +139,23 @@ wires the tracker to `LiveCommand::SaveProgress` and
 - The API version is checked from `GET /api/health` before pairing. A newer
   server is refused instead of being driven with an unknown contract.
 
+## Search and library writes
+
+The Search screen keeps a request query plus a status (`Idle`, `Loading`,
+`Ready`, `Failed`). Submitting a non-empty query sends `LiveCommand::Search`;
+results are accepted only when the response's query still matches, so a slow
+reply cannot overwrite a newer search. Up to six results become
+`catalog::SearchCard`s with the same deterministic palette as live library
+items.
+
+Pressing OK on a result either opens the existing library title or sends
+`LiveCommand::AddToLibrary`. The worker performs the blocking `POST
+/api/library`, refreshes the library, then announces `Added`. A duplicate
+(`409`) and a missing scope (`403`) both clear the row's `ADDING…` state and
+surface the server message. The live pairing requests `library:read`,
+`library:write`, and `progress:write`. The client does not hide the button based
+on a local scope guess; the server remains the authority.
+
 ## Playback
 
 The server selects a file for `platform=webos`:

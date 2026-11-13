@@ -10,7 +10,7 @@ use archiveplayer_tv_protocol::{DeviceStartRequest, DeviceStartResponse, DeviceT
 
 pub const PLATFORM: &str = "webos";
 pub const DEFAULT_CLIENT_NAME: &str = "ArchivePlayer TV";
-pub const DEVICE_SCOPES: [&str; 2] = ["library:read", "progress:write"];
+pub const DEVICE_SCOPES: [&str; 3] = ["library:read", "library:write", "progress:write"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PairingPoll {

@@ -4,7 +4,9 @@
 //! ships no unlicensed poster images.
 
 use archiveplayer_tv_gfx::{Color, Image};
-use archiveplayer_tv_protocol::{LibraryItem, LibraryResponse, MediaDetails, PlaybackPlan};
+use archiveplayer_tv_protocol::{
+    ArchiveSearchResult, LibraryItem, LibraryResponse, MediaDetails, PlaybackPlan,
+};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +185,37 @@ impl MediaItem {
                 .or_else(|| item.thumbnail_url.clone()),
             poster: None,
             playback_plan: None,
+            palette,
+            accent,
+        }
+    }
+}
+
+/// A search hit from Archive.org that is not in the library yet. It keeps the
+/// palette and title so the result row can be drawn without a network image.
+#[derive(Debug, Clone)]
+pub struct SearchCard {
+    pub identifier: String,
+    pub title: String,
+    pub kind: String,
+    pub palette: (Color, Color),
+    pub accent: Color,
+}
+
+impl SearchCard {
+    pub fn from_result(result: &ArchiveSearchResult) -> Self {
+        let (palette, accent) = MediaItem::live_palette(&result.identifier);
+        let kind = match result.media_type.to_lowercase().as_str() {
+            "movies" => "MOVIE".to_string(),
+            "tv" | "series" => "SERIES".to_string(),
+            "animation" => "ANIMATION".to_string(),
+            "" => "ARCHIVE.ORG".to_string(),
+            other => other.to_uppercase(),
+        };
+        Self {
+            identifier: result.identifier.clone(),
+            title: result.title.clone(),
+            kind,
             palette,
             accent,
         }

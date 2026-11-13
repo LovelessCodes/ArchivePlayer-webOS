@@ -3,8 +3,9 @@
 use archiveplayer_tv_gfx::Rect;
 use archiveplayer_tv_ui::{self as ui, FocusMove, Screen};
 
-use crate::catalog::{Catalog, MediaItem};
+use crate::catalog::{Catalog, MediaItem, SearchCard};
 use crate::layout;
+use archiveplayer_tv_protocol::ArchiveSearchResponse;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PairingStatus {
@@ -16,6 +17,14 @@ pub enum PairingStatus {
     Error,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SearchStatus {
+    Idle,
+    Loading,
+    Ready,
+    Failed(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Go(Screen),
@@ -24,7 +33,9 @@ pub enum Action {
     Back,
     SetCategory(usize),
     FocusSearch,
+    SubmitSearch,
     SearchSuggest(usize),
+    AddResult(usize),
     Pair,
     PairSimulate,
     PairRefresh,
@@ -58,6 +69,13 @@ pub struct App {
     pub category: usize,
     pub search_query: String,
     pub search_editing: bool,
+    pub search_status: SearchStatus,
+    pub archive_results: Vec<SearchCard>,
+    pub archive_query: String,
+    pub archive_total: i64,
+    pub archive_page: i64,
+    pub archive_has_more: bool,
+    pub search_add: Option<String>,
     pub player_position: f64,
     pub player_duration: f64,
     pub player_playing: bool,
@@ -93,6 +111,13 @@ impl App {
             category: 0,
             search_query: String::new(),
             search_editing: false,
+            search_status: SearchStatus::Idle,
+            archive_results: Vec::new(),
+            archive_query: String::new(),
+            archive_total: 0,
+            archive_page: 0,
+            archive_has_more: false,
+            search_add: None,
             player_position: player_position as f64,
             player_duration: player_duration.max(1) as f64,
             player_playing: false,
@@ -194,6 +219,13 @@ impl App {
             category: 0,
             search_query: String::new(),
             search_editing: false,
+            search_status: SearchStatus::Idle,
+            archive_results: Vec::new(),
+            archive_query: String::new(),
+            archive_total: 0,
+            archive_page: 0,
+            archive_has_more: false,
+            search_add: None,
             player_position: 0.0,
             player_duration: 1.0,
             player_playing: false,
@@ -296,6 +328,82 @@ impl App {
             .collect()
     }
 
+    pub fn archive_card(&self, index: usize) -> Option<&SearchCard> {
+        self.archive_results.get(index)
+    }
+
+    pub fn is_in_library(&self, identifier: &str) -> bool {
+        self.library.index_of(identifier).is_some()
+    }
+
+    pub fn clear_archive_results(&mut self) {
+        self.search_status = SearchStatus::Idle;
+        self.archive_results.clear();
+        self.archive_query.clear();
+        self.archive_total = 0;
+        self.archive_page = 0;
+        self.archive_has_more = false;
+        self.search_add = None;
+    }
+
+    /// Start a remote search. Returns false for an empty query or demo mode;
+    /// the caller then has no network command to dispatch.
+    pub fn start_search(&mut self) -> bool {
+        self.search_editing = false;
+        let query = self.search_query.trim().to_string();
+        if query.is_empty() {
+            self.clear_archive_results();
+            return false;
+        }
+        if !self.live {
+            return false;
+        }
+        self.archive_query = query;
+        self.archive_results.clear();
+        self.archive_total = 0;
+        self.archive_page = 0;
+        self.archive_has_more = false;
+        self.search_add = None;
+        self.search_status = SearchStatus::Loading;
+        true
+    }
+
+    pub fn apply_archive_results(&mut self, query: &str, response: ArchiveSearchResponse) {
+        if query != self.archive_query || self.search_status != SearchStatus::Loading {
+            return;
+        }
+        self.archive_results = response
+            .results
+            .iter()
+            .take(6)
+            .map(SearchCard::from_result)
+            .collect();
+        self.archive_total = response.total_results;
+        self.archive_page = response.current_page;
+        self.archive_has_more = response.has_more_results;
+        self.search_status = SearchStatus::Ready;
+    }
+
+    pub fn fail_archive_search(&mut self, query: &str, message: impl Into<String>) {
+        if query != self.archive_query || self.search_status != SearchStatus::Loading {
+            return;
+        }
+        self.archive_results.clear();
+        self.archive_total = 0;
+        self.search_status = SearchStatus::Failed(message.into());
+    }
+
+    pub fn finish_add(&mut self, identifier: &str) {
+        if self.search_add.as_deref() == Some(identifier) {
+            self.search_add = None;
+        }
+    }
+
+    pub fn reset_search_state(&mut self) {
+        self.search_editing = false;
+        self.clear_archive_results();
+    }
+
     pub fn targets(&self) -> Vec<FocusTarget> {
         let mut targets = Vec::new();
         if !matches!(self.screen, Screen::Pair | Screen::Player | Screen::Detail) {
@@ -369,7 +477,16 @@ impl App {
             Screen::Search => {
                 let results = self.search_results();
                 let suggestions = self.search_suggestions();
-                let search = layout::search(suggestions.len(), results.len());
+                let result_count = if self.live {
+                    self.archive_results.len()
+                } else {
+                    results.len()
+                };
+                let search = if self.live {
+                    layout::search_remote(suggestions.len(), result_count)
+                } else {
+                    layout::search(suggestions.len(), result_count)
+                };
                 targets.push(FocusTarget {
                     rect: search.input,
                     action: Action::FocusSearch,
@@ -380,10 +497,14 @@ impl App {
                         action: Action::SearchSuggest(index),
                     });
                 }
-                for (rect, index) in search.results.iter().zip(results) {
+                for (index, rect) in search.results.iter().enumerate() {
                     targets.push(FocusTarget {
                         rect: *rect,
-                        action: Action::Open(index),
+                        action: if self.live {
+                            Action::AddResult(index)
+                        } else {
+                            Action::Open(results[index])
+                        },
                     });
                 }
             }
@@ -440,7 +561,11 @@ impl App {
         if self.screen != screen {
             self.previous = Some(self.screen);
             self.screen = screen;
-            self.focus_index = 0;
+            self.focus_index = if screen == Screen::Search {
+                NAV_SCREENS.len()
+            } else {
+                0
+            };
             self.search_editing = false;
         }
         if screen == Screen::Player {
@@ -479,6 +604,42 @@ impl App {
         if self.search_editing {
             return;
         }
+        // The search box spans the content column, so plain spatial scoring
+        // would route Right from the sidebar into the first chip. A TV remote
+        // expects Right to reach the box and Down from it to reach results.
+        if self.screen == Screen::Search {
+            let nav_search = NAV_SCREENS
+                .iter()
+                .position(|screen| *screen == Screen::Search)
+                .unwrap_or(2);
+            let input_index = NAV_SCREENS.len();
+            let first_chip = input_index + 1;
+            let first_result = first_chip + self.search_suggestions().len();
+            let result_count = if self.live {
+                self.archive_results.len()
+            } else {
+                self.search_results().len()
+            };
+            if self.focus_index == nav_search && direction == FocusMove::Right {
+                self.focus_index = input_index;
+                return;
+            }
+            if direction == FocusMove::Down && self.focus_index == input_index {
+                self.focus_index = if result_count > 0 {
+                    first_result
+                } else {
+                    first_chip
+                };
+                return;
+            }
+            if direction == FocusMove::Down
+                && (first_chip..first_result).contains(&self.focus_index)
+                && result_count > 0
+            {
+                self.focus_index = first_result;
+                return;
+            }
+        }
         let targets = self.targets();
         let rects: Vec<Rect> = targets.iter().map(|target| target.rect).collect();
         self.focus_index = ui::navigate(&rects, self.focus_index, direction);
@@ -502,12 +663,35 @@ impl App {
             }
             Action::Back => self.back(),
             Action::SetCategory(index) => self.category = index,
-            Action::FocusSearch => self.search_editing = true,
+            Action::FocusSearch => {
+                if self.search_editing {
+                    if self.start_search() {
+                        return Action::SubmitSearch;
+                    }
+                    return Action::None;
+                }
+                self.search_editing = true;
+            }
+            Action::SubmitSearch => {}
             Action::SearchSuggest(index) => {
                 if let Some(suggestion) = self.search_suggestions().get(index) {
                     self.search_query = suggestion.clone();
                     self.search_editing = false;
+                    if self.start_search() {
+                        return Action::SubmitSearch;
+                    }
                 }
+            }
+            Action::AddResult(index) => {
+                let Some(card) = self.archive_results.get(index).cloned() else {
+                    return Action::None;
+                };
+                if let Some(item_index) = self.library.index_of(&card.identifier) {
+                    self.selected = item_index;
+                    self.set_screen(Screen::Detail);
+                    return Action::Open(item_index);
+                }
+                self.search_add = Some(card.identifier);
             }
             Action::Pair => self.set_screen(Screen::Pair),
             Action::PairSimulate => {
@@ -535,15 +719,19 @@ impl App {
 
     pub fn on_text(&mut self, text: &str) {
         if self.search_editing {
+            let before = self.search_query.len();
             for character in text.chars().filter(|character| !character.is_control()) {
                 self.search_query.push(character);
+            }
+            if self.live && self.search_query.len() != before {
+                self.clear_archive_results();
             }
         }
     }
 
     pub fn on_backspace(&mut self) {
-        if self.search_editing {
-            self.search_query.pop();
+        if self.search_editing && self.search_query.pop().is_some() && self.live {
+            self.clear_archive_results();
         }
     }
 

@@ -251,6 +251,14 @@ pub struct MediaDetails {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AddLibraryRequest {
+    pub identifier: String,
+    #[serde(default)]
+    pub category_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceStartRequest {
     pub client_name: String,
     pub platform: String,
@@ -321,6 +329,17 @@ pub struct CompletedRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn writes_an_add_to_library_request() {
+        let request = AddLibraryRequest {
+            identifier: "night_of_the_living_dead".into(),
+            category_name: Some("Horror".into()),
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"identifier\""));
+        assert!(json.contains("\"categoryName\":\"Horror\""));
+    }
 
     #[test]
     fn reads_a_playback_plan() {

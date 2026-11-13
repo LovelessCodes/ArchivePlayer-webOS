@@ -179,6 +179,24 @@ pub fn search(chip_count: usize, result_count: usize) -> SearchLayout {
     }
 }
 
+/// Live search results are wide rows: they carry a source, a kind, and an
+/// add state, so a poster grid would waste the space.
+pub fn search_remote(chip_count: usize, result_count: usize) -> SearchLayout {
+    SearchLayout {
+        input: Rect::new(Theme::CONTENT_X, 128, 960, 64),
+        chips: (0..chip_count)
+            .map(|index| Rect::new(Theme::CONTENT_X + index as i32 * 180, 222, 168, 42))
+            .collect(),
+        results: (0..result_count)
+            .map(|index| {
+                let column = index as i32 % 2;
+                let row = index as i32 / 2;
+                Rect::new(Theme::CONTENT_X + column * 800, 330 + row * 186, 776, 164)
+            })
+            .collect(),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsLayout {
     pub cards: Vec<Rect>,

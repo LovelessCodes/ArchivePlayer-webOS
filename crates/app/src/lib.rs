@@ -168,6 +168,19 @@ mod ui_tests {
         assert!(app.search_results().contains(&10));
     }
     #[test]
+    fn search_focus_reaches_the_box_and_results() {
+        let mut app = App::demo();
+        app.set_screen(Screen::Search);
+        assert_eq!(app.focus_index, 4);
+        app.focus_index = 2;
+        app.move_focus(archiveplayer_tv_ui::FocusMove::Right);
+        assert_eq!(app.focus_index, 4);
+        app.search_query = "noir".into();
+        app.move_focus(archiveplayer_tv_ui::FocusMove::Down);
+        assert_eq!(app.focus_index, 9);
+    }
+
+    #[test]
     fn spatial_focus_moves_from_hero_to_buttons() {
         let mut app = App::demo();
         app.focus_index = 4;
@@ -188,6 +201,78 @@ mod ui_tests {
         assert_eq!(app.selected, 0);
         app.back();
         assert_eq!(app.screen, Screen::Library);
+    }
+
+    fn archive_response(identifiers: &[&str]) -> archiveplayer_tv_protocol::ArchiveSearchResponse {
+        archiveplayer_tv_protocol::ArchiveSearchResponse {
+            results: identifiers
+                .iter()
+                .map(
+                    |identifier| archiveplayer_tv_protocol::ArchiveSearchResult {
+                        identifier: (*identifier).into(),
+                        title: format!("Title {identifier}"),
+                        media_type: "movies".into(),
+                        thumbnail_url: format!("https://archive.org/services/img/{identifier}"),
+                    },
+                )
+                .collect(),
+            has_more_results: true,
+            current_page: 1,
+            total_results: 42,
+        }
+    }
+
+    #[test]
+    fn live_search_submits_and_builds_addable_cards() {
+        let mut app = App::live("ArchivePlayer", "http://127.0.0.1:8080");
+        app.screen = Screen::Search;
+        app.search_query = " night ".into();
+        assert!(app.start_search());
+        assert_eq!(app.archive_query, "night");
+        assert_eq!(app.search_status, state::SearchStatus::Loading);
+
+        app.apply_archive_results("night", archive_response(&["night_a", "night_b"]));
+        assert_eq!(app.archive_results.len(), 2);
+        assert_eq!(app.archive_total, 42);
+        assert!(app.archive_has_more);
+        assert_eq!(app.search_status, state::SearchStatus::Ready);
+        assert!(app
+            .targets()
+            .iter()
+            .any(|target| target.action == Action::AddResult(0)));
+    }
+
+    #[test]
+    fn stale_search_results_are_ignored() {
+        let mut app = App::live("ArchivePlayer", "http://127.0.0.1:8080");
+        app.screen = Screen::Search;
+        app.search_query = "night".into();
+        app.start_search();
+        app.apply_archive_results("other", archive_response(&["other"]));
+        assert!(app.archive_results.is_empty());
+        assert_eq!(app.search_status, state::SearchStatus::Loading);
+        app.apply_archive_results("night", archive_response(&["night"]));
+        assert_eq!(app.archive_results.len(), 1);
+    }
+
+    #[test]
+    fn archive_results_add_or_open_existing_titles() {
+        let mut app = App::live("ArchivePlayer", "http://127.0.0.1:8080");
+        app.set_catalog(catalog::Catalog::demo());
+        app.screen = Screen::Search;
+        app.search_query = "night".into();
+        app.start_search();
+        app.apply_archive_results("night", archive_response(&["new_title"]));
+        app.focus_index = 9;
+        assert_eq!(app.activate(), Action::AddResult(0));
+        assert_eq!(app.search_add.as_deref(), Some("new_title"));
+
+        app.search_add = None;
+        app.start_search();
+        app.apply_archive_results("night", archive_response(&["nosferatu"]));
+        app.focus_index = 9;
+        assert!(matches!(app.activate(), Action::Open(_)));
+        assert_eq!(app.screen, Screen::Detail);
     }
 
     #[test]

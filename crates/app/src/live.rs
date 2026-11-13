@@ -17,7 +17,10 @@ use archiveplayer_tv_api::{
 };
 use archiveplayer_tv_gfx::Image;
 use archiveplayer_tv_platform::{FileSecretStore, SecretStore};
-use archiveplayer_tv_protocol::{CompletedRequest, LibraryResponse, MediaDetails, ProgressRequest};
+use archiveplayer_tv_protocol::{
+    ArchiveSearchResponse, CompletedRequest, LibraryItem, LibraryResponse, MediaDetails,
+    ProgressRequest,
+};
 
 use crate::pairing::{PairingFlow, PairingPoll};
 use crate::poster::decode_poster;
@@ -55,6 +58,22 @@ pub enum LiveEvent {
     PairingStatus(PairingView),
     Library(LibraryResponse),
     Details(Box<MediaDetails>),
+    SearchResults {
+        query: String,
+        response: Box<ArchiveSearchResponse>,
+    },
+    SearchFailed {
+        query: String,
+        message: String,
+    },
+    Added {
+        identifier: String,
+        title: String,
+    },
+    AddFailed {
+        identifier: String,
+        message: String,
+    },
     Poster {
         identifier: String,
         image: Image,
@@ -67,6 +86,14 @@ pub enum LiveCommand {
     StartPairing,
     Refresh,
     LoadDetails(String),
+    Search {
+        query: String,
+        page: u32,
+    },
+    AddToLibrary {
+        identifier: String,
+        category_name: Option<String>,
+    },
     SaveProgress {
         identifier: String,
         file_name: String,
@@ -321,6 +348,77 @@ impl Worker {
         }
     }
 
+    fn search(&mut self, query: &str, page: u32) {
+        let Some(client) = &self.client else {
+            self.send(LiveEvent::SearchFailed {
+                query: query.to_string(),
+                message: "Pair this TV before searching Archive.org.".into(),
+            });
+            return;
+        };
+        match client.search(query, Some(page)) {
+            Ok(response) => self.send(LiveEvent::SearchResults {
+                query: query.to_string(),
+                response: Box::new(response),
+            }),
+            Err(error) => {
+                self.send(LiveEvent::SearchFailed {
+                    query: query.to_string(),
+                    message: error.to_string(),
+                });
+                if error.is_unauthorized() {
+                    self.handle_api_error(error, "the session expired during search");
+                }
+            }
+        }
+    }
+
+    fn add_to_library(&mut self, identifier: &str, category_name: Option<&str>) {
+        let Some(client) = &self.client else {
+            self.send(LiveEvent::AddFailed {
+                identifier: identifier.to_string(),
+                message: "Pair this TV before changing the library.".into(),
+            });
+            return;
+        };
+        let result: Result<LibraryItem, ApiError> =
+            client.add_to_library(identifier, category_name);
+        match result {
+            Ok(item) => {
+                let title = item.title.clone();
+                // Refresh before announcing the add so the list toast does not
+                // hide the more useful "Added …" confirmation.
+                self.refresh_library();
+                self.send(LiveEvent::Added {
+                    identifier: identifier.to_string(),
+                    title,
+                });
+            }
+            Err(error) => {
+                let duplicate = matches!(error, ApiError::Status { status: 409, .. });
+                let message = match &error {
+                    ApiError::Status { status: 409, .. } => {
+                        "This title is already in your library.".to_string()
+                    }
+                    ApiError::Status { status: 403, .. } => {
+                        "This TV is not allowed to add titles. Pair it again from Settings."
+                            .to_string()
+                    }
+                    _ => error.to_string(),
+                };
+                self.send(LiveEvent::AddFailed {
+                    identifier: identifier.to_string(),
+                    message,
+                });
+                if error.is_unauthorized() {
+                    self.handle_api_error(error, "the session expired while adding a title");
+                } else if duplicate {
+                    self.refresh_library();
+                }
+            }
+        }
+    }
+
     fn handle_api_error(&mut self, error: ApiError, context: &str) {
         if error.is_unauthorized() {
             self.forget_session();
@@ -425,6 +523,11 @@ impl Worker {
                 }
             }
             LiveCommand::LoadDetails(identifier) => self.load_details(identifier),
+            LiveCommand::Search { query, page } => self.search(&query, page),
+            LiveCommand::AddToLibrary {
+                identifier,
+                category_name,
+            } => self.add_to_library(&identifier, category_name.as_deref()),
             LiveCommand::SaveProgress {
                 identifier,
                 file_name,

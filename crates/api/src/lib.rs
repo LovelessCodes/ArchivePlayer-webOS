@@ -201,6 +201,21 @@ impl ApiClient {
         self.get(&["api", "library", "continue-watching"], &query, true)
     }
 
+    /// Add an Archive.org identifier to the paired user's library. The server
+    /// fetches metadata and may run a TMDB match, so this can take a few
+    /// seconds; it runs on the live worker rather than the render loop.
+    pub fn add_to_library(
+        &self,
+        identifier: &str,
+        category_name: Option<&str>,
+    ) -> Result<proto::LibraryItem, ApiError> {
+        let request = proto::AddLibraryRequest {
+            identifier: identifier.to_string(),
+            category_name: category_name.map(str::to_string),
+        };
+        self.post(&["api", "library"], &request, true)
+    }
+
     pub fn search(
         &self,
         query: &str,

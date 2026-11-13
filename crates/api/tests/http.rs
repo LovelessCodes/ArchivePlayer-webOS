@@ -137,6 +137,47 @@ fn encodes_playback_platform_and_file() {
 }
 
 #[test]
+fn adds_to_the_library_with_a_post() {
+    let (base, server) = serve_once(
+        "200 OK",
+        r#"{"id":7,"identifier":"night_of_the_living_dead","title":"Night of the Living Dead"}"#,
+        "",
+    );
+    let client = ApiClient::new(&base)
+        .unwrap()
+        .with_token(Some("token".into()));
+    let item = client
+        .add_to_library("night_of_the_living_dead", Some("Horror"))
+        .unwrap();
+    assert_eq!(item.id, 7);
+    let request = server.join().unwrap();
+    assert!(request.starts_with("POST /api/library HTTP/1.1"));
+    assert!(request
+        .to_ascii_lowercase()
+        .contains("authorization: bearer token"));
+    assert!(request.contains("\"identifier\":\"night_of_the_living_dead\""));
+    assert!(request.contains("\"categoryName\":\"Horror\""));
+}
+
+#[test]
+fn searches_the_archive_with_a_url_encoded_query() {
+    let (base, server) = serve_once(
+        "200 OK",
+        r#"{"results":[],"hasMoreResults":false,"currentPage":1,"totalResults":0}"#,
+        "",
+    );
+    let client = ApiClient::new(&base)
+        .unwrap()
+        .with_token(Some("token".into()));
+    let response = client.search("night of the living dead", Some(2)).unwrap();
+    assert_eq!(response.current_page, 1);
+    let request = server.join().unwrap();
+    assert!(request.starts_with("GET /api/search?"));
+    assert!(request.contains("q=night+of+the+living+dead"));
+    assert!(request.contains("page=2"));
+}
+
+#[test]
 fn sends_progress_as_a_put_with_camel_case_fields() {
     let (base, server) = serve_once("204 No Content", "", "");
     let client = ApiClient::new(&base)

@@ -502,7 +502,16 @@ fn draw_library_card(canvas: &mut Canvas, rect: Rect, item: &MediaItem, focused:
 fn draw_search(app: &App, canvas: &mut Canvas) {
     let results = app.search_results();
     let suggestions = app.search_suggestions();
-    let search = layout::search(suggestions.len(), results.len());
+    let result_count = if app.live {
+        app.archive_results.len()
+    } else {
+        results.len()
+    };
+    let search = if app.live {
+        layout::search_remote(suggestions.len(), result_count)
+    } else {
+        layout::search(suggestions.len(), result_count)
+    };
 
     let focused = app.is_focused(search.input);
     let editing = app.search_editing;
@@ -536,7 +545,11 @@ fn draw_search(app: &App, canvas: &mut Canvas) {
         },
     );
     let query = if app.search_query.is_empty() {
-        "Search your library"
+        if app.live {
+            "Search Archive.org"
+        } else {
+            "Search your library"
+        }
     } else {
         &app.search_query
     };
@@ -638,7 +651,14 @@ fn draw_search(app: &App, canvas: &mut Canvas) {
         );
     }
 
-    let label = if app.search_query.is_empty() {
+    let label = if app.live {
+        match app.search_status {
+            crate::state::SearchStatus::Loading => "Searching Archive.org",
+            crate::state::SearchStatus::Failed(_) => "Search failed",
+            _ if app.archive_query.is_empty() => "Find something on Archive.org",
+            _ => "Archive.org results",
+        }
+    } else if app.search_query.is_empty() {
         "Popular right now"
     } else {
         "Results"
@@ -652,9 +672,24 @@ fn draw_search(app: &App, canvas: &mut Canvas) {
         Theme::MUTED,
         FontWeight::SemiBold,
     );
-    text_right(
-        canvas,
-        &format!(
+    let count = if app.live {
+        if app.archive_total > 0 {
+            if app.archive_total > app.archive_results.len() as i64 {
+                format!(
+                    "{} found  ·  showing {}",
+                    app.archive_total,
+                    app.archive_results.len()
+                )
+            } else {
+                format!("{} found", app.archive_total)
+            }
+        } else if !app.archive_results.is_empty() {
+            format!("{} shown", app.archive_results.len())
+        } else {
+            String::new()
+        }
+    } else {
+        format!(
             "{} {}",
             results.len(),
             if results.len() == 1 {
@@ -662,13 +697,22 @@ fn draw_search(app: &App, canvas: &mut Canvas) {
             } else {
                 "titles"
             }
-        ),
+        )
+    };
+    text_right(
+        canvas,
+        &count,
         Theme::CONTENT_X + Theme::CONTENT_W,
         292,
         12.0,
         Theme::DIM,
         FontWeight::Regular,
     );
+
+    if app.live {
+        draw_archive_results(app, canvas, &search);
+        return;
+    }
 
     if results.is_empty() {
         let empty = Rect::new(Theme::CONTENT_X, 330, Theme::CONTENT_W, 330);
@@ -698,6 +742,308 @@ fn draw_search(app: &App, canvas: &mut Canvas) {
         let item = app.library.item(index);
         draw_library_card(canvas, *rect, item, app.is_focused(*rect));
     }
+}
+
+fn draw_archive_results(app: &App, canvas: &mut Canvas, search: &layout::SearchLayout) {
+    use crate::state::SearchStatus;
+
+    match &app.search_status {
+        SearchStatus::Loading => {
+            let panel = Rect::new(Theme::CONTENT_X, 330, Theme::CONTENT_W, 300);
+            canvas.fill_round_rect(panel, 20.0, Theme::PANEL.with_alpha(120));
+            text_centered(
+                canvas,
+                "Searching Archive.org…",
+                panel.center().0,
+                panel.y + 138,
+                26.0,
+                Theme::TEXT_SOFT,
+                FontWeight::Medium,
+            );
+            text_centered(
+                canvas,
+                "The server is querying public-domain film, television, and animation.",
+                panel.center().0,
+                panel.y + 174,
+                15.0,
+                Theme::MUTED,
+                FontWeight::Regular,
+            );
+            return;
+        }
+        SearchStatus::Failed(message) => {
+            let panel = Rect::new(Theme::CONTENT_X, 330, Theme::CONTENT_W, 330);
+            canvas.fill_round_rect(panel, 20.0, Theme::PANEL.with_alpha(140));
+            canvas.stroke_round_rect(panel, 20.0, 1.0, Theme::DANGER.with_alpha(90));
+            text_centered(
+                canvas,
+                "Archive.org search failed",
+                panel.center().0,
+                panel.y + 126,
+                26.0,
+                Theme::TEXT_SOFT,
+                FontWeight::Medium,
+            );
+            let message = canvas.clipped(message, 1180.0, TextStyle::new(15.0, Theme::MUTED));
+            text_centered(
+                canvas,
+                &message,
+                panel.center().0,
+                panel.y + 162,
+                15.0,
+                Theme::MUTED,
+                FontWeight::Regular,
+            );
+            text_centered(
+                canvas,
+                "Focus the search box and press ENTER to try again.",
+                panel.center().0,
+                panel.y + 210,
+                14.0,
+                Theme::DIM,
+                FontWeight::Regular,
+            );
+            return;
+        }
+        SearchStatus::Idle if app.archive_query.is_empty() => {
+            let panel = Rect::new(Theme::CONTENT_X, 330, Theme::CONTENT_W, 330);
+            canvas.fill_round_rect(panel, 20.0, Theme::PANEL.with_alpha(120));
+            draw_icon(
+                canvas,
+                "search",
+                Rect::new(panel.center().0 - 22, panel.y + 96, 44, 44),
+                Theme::DIM,
+            );
+            text_centered(
+                canvas,
+                "Search the Internet Archive",
+                panel.center().0,
+                panel.y + 184,
+                26.0,
+                Theme::TEXT_SOFT,
+                FontWeight::Medium,
+            );
+            text_centered(
+                canvas,
+                "Type a title, then press ENTER. Pick a result to add it to your library.",
+                panel.center().0,
+                panel.y + 220,
+                15.0,
+                Theme::MUTED,
+                FontWeight::Regular,
+            );
+            return;
+        }
+        _ => {}
+    }
+
+    if app.archive_results.is_empty() {
+        let panel = Rect::new(Theme::CONTENT_X, 330, Theme::CONTENT_W, 300);
+        canvas.fill_round_rect(panel, 20.0, Theme::PANEL.with_alpha(120));
+        text_centered(
+            canvas,
+            "No matches on Archive.org",
+            panel.center().0,
+            panel.y + 138,
+            26.0,
+            Theme::TEXT_SOFT,
+            FontWeight::Medium,
+        );
+        text_centered(
+            canvas,
+            "Try a shorter title, an alternate spelling, or a different year.",
+            panel.center().0,
+            panel.y + 174,
+            15.0,
+            Theme::MUTED,
+            FontWeight::Regular,
+        );
+        return;
+    }
+
+    for (index, rect) in search.results.iter().enumerate() {
+        let Some(card) = app.archive_card(index) else {
+            continue;
+        };
+        let in_library = app.is_in_library(&card.identifier);
+        let adding = app.search_add.as_deref() == Some(card.identifier.as_str());
+        draw_archive_result(
+            canvas,
+            *rect,
+            card,
+            app.is_focused(*rect),
+            in_library,
+            adding,
+        );
+    }
+}
+
+fn draw_archive_result(
+    canvas: &mut Canvas,
+    rect: Rect,
+    card: &crate::catalog::SearchCard,
+    focused: bool,
+    in_library: bool,
+    adding: bool,
+) {
+    canvas.fill_round_rect(
+        rect,
+        16.0,
+        if focused {
+            Theme::PANEL_RAISED
+        } else {
+            Theme::PANEL
+        },
+    );
+    if focused {
+        canvas.stroke_round_rect(rect, 16.0, 2.0, Theme::PRIMARY);
+    } else {
+        canvas.stroke_round_rect(rect, 16.0, 1.0, Theme::BORDER_SOFT);
+    }
+
+    let thumb = Rect::new(rect.x + 18, rect.y + 18, 200, 128);
+    canvas.fill_round_vertical_gradient(thumb, 12.0, card.palette.0, card.palette.1);
+    canvas.fill_circle(
+        (thumb.right() - 34, thumb.y + 28),
+        44.0,
+        card.accent.with_alpha(26),
+    );
+    for offset in 0..5 {
+        let x = thumb.x + 20 + offset * 38;
+        canvas.line(
+            x,
+            thumb.y,
+            x - 40,
+            thumb.bottom(),
+            1.0,
+            WHITE.with_alpha(10),
+        );
+    }
+    let initial = card.title.chars().next().unwrap_or('A').to_string();
+    text(
+        canvas,
+        &initial,
+        thumb.x + 18,
+        thumb.y + 90,
+        72.0,
+        card.accent.with_alpha(54),
+        FontWeight::Bold,
+    );
+    text_right(
+        canvas,
+        "ARCHIVE.ORG",
+        thumb.right() - 12,
+        thumb.bottom() - 12,
+        9.0,
+        WHITE.with_alpha(90),
+        FontWeight::SemiBold,
+    );
+
+    let text_x = thumb.right() + 24;
+    let text_width = (rect.right() - 190 - text_x).max(120) as f32;
+    let title = canvas.clipped(
+        &card.title,
+        text_width,
+        TextStyle::new(
+            24.0,
+            if focused {
+                Theme::TEXT
+            } else {
+                Theme::TEXT_SOFT
+            },
+        )
+        .semibold(),
+    );
+    text(
+        canvas,
+        &title,
+        text_x,
+        rect.y + 56,
+        24.0,
+        if focused {
+            Theme::TEXT
+        } else {
+            Theme::TEXT_SOFT
+        },
+        FontWeight::SemiBold,
+    );
+    text(
+        canvas,
+        &card.kind,
+        text_x,
+        rect.y + 86,
+        11.0,
+        card.accent,
+        FontWeight::SemiBold,
+    );
+    text(
+        canvas,
+        if in_library {
+            "Already in your library  ·  OK opens details"
+        } else if adding {
+            "Adding this title…"
+        } else {
+            "OK adds this title to your library"
+        },
+        text_x,
+        rect.y + 116,
+        13.0,
+        if in_library {
+            Theme::SUCCESS
+        } else if adding {
+            Theme::AMBER
+        } else {
+            Theme::MUTED
+        },
+        FontWeight::Regular,
+    );
+
+    let badge_text = if adding {
+        "ADDING…"
+    } else if in_library {
+        "IN LIBRARY"
+    } else {
+        "ADD"
+    };
+    let badge = Rect::new(rect.right() - 156, rect.y + 62, 132, 42);
+    canvas.fill_round_rect(
+        badge,
+        21.0,
+        if in_library {
+            Theme::SUCCESS.with_alpha(34)
+        } else if adding {
+            Theme::AMBER.with_alpha(30)
+        } else {
+            Theme::PRIMARY.with_alpha(24)
+        },
+    );
+    canvas.stroke_round_rect(
+        badge,
+        21.0,
+        1.0,
+        if in_library {
+            Theme::SUCCESS.with_alpha(130)
+        } else if adding {
+            Theme::AMBER.with_alpha(130)
+        } else {
+            Theme::PRIMARY.with_alpha(130)
+        },
+    );
+    text_centered(
+        canvas,
+        badge_text,
+        badge.center().0,
+        badge.y + 27,
+        12.0,
+        if in_library {
+            Theme::SUCCESS
+        } else if adding {
+            Theme::AMBER
+        } else {
+            Theme::PRIMARY_LIGHT
+        },
+        FontWeight::SemiBold,
+    );
 }
 
 fn draw_detail(app: &App, canvas: &mut Canvas) {

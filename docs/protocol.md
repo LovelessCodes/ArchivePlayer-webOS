@@ -12,6 +12,7 @@ is in the main repository's
 | `POST` | `/api/device/token` | device code | Poll approval and redeem the bearer token. |
 | `GET` | `/api/library` | bearer | Categories and titles. |
 | `GET` | `/api/library/continue-watching` | bearer | Resume row. |
+| `POST` | `/api/library` | bearer + `library:write` | Add an Archive.org identifier. |
 | `GET` | `/api/search?q=&page=` | bearer | Archive.org search. |
 | `GET` | `/api/playback/{identifier}?platform=webos&file=` | bearer | Details, files, episodes, and `playbackPlan`. |
 | `PUT` | `/api/playback/{identifier}/progress` | bearer | Save position/duration. |
@@ -23,7 +24,7 @@ is in the main repository's
 {
   "clientName": "Living room TV",
   "platform": "webos",
-  "scopes": ["library:read", "progress:write"]
+  "scopes": ["library:read", "library:write", "progress:write"]
 }
 ```
 
@@ -41,6 +42,31 @@ off. After approval the response is:
 
 Store the token in the private file store, never in browser storage. Send it as
 `Authorization: Bearer <token>` on every authenticated request.
+
+## Search and add
+
+Search is server-side, so the TV never calls Archive.org directly:
+
+```http
+GET /api/search?q=night&page=1
+Authorization: Bearer <token>
+```
+
+Each result carries `identifier`, `title`, `mediaType`, and `thumbnailUrl`.
+Adding one is a small JSON body:
+
+```http
+POST /api/library
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{ "identifier": "night_of_the_living_dead", "categoryName": "Uncategorized" }
+```
+
+The response is the new `LibraryItem`. A duplicate is `HTTP 409` with
+`code: "conflict"`; refresh the library rather than treating it as a failure.
+The session needs `library:write`; download and playback only need
+`library:read`/`progress:write`.
 
 ## Playback plan
 

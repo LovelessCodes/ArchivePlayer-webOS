@@ -257,6 +257,7 @@ fn write_live_screenshot(
     let deadline = Instant::now() + Duration::from_secs(12);
     let mut loaded_details = false;
     let mut library_seen: Option<Instant> = None;
+    let mut search_started = false;
 
     while Instant::now() < deadline {
         for event in live.events() {
@@ -285,6 +286,25 @@ fn write_live_screenshot(
                     || library_seen.is_some_and(|seen| seen.elapsed() > Duration::from_secs(3)))
             {
                 break;
+            } else if screen == Screen::Search && app.screen != Screen::Search {
+                app.set_screen(Screen::Search);
+                app.search_query = "night".into();
+                if app.start_search() {
+                    live.send(LiveCommand::Search {
+                        query: app.archive_query.clone(),
+                        page: 1,
+                    });
+                }
+                search_started = true;
+            }
+            if screen == Screen::Search
+                && search_started
+                && !matches!(
+                    app.search_status,
+                    archiveplayer_webos::state::SearchStatus::Loading
+                )
+            {
+                break;
             }
         }
         if screen == Screen::Pair && !app.pairing_code.is_empty() {
@@ -303,8 +323,7 @@ fn write_live_screenshot(
         app.focus_index = 4;
     } else if screen == Screen::Search {
         app.set_screen(Screen::Search);
-        app.search_query = "night".into();
-        app.focus_index = 7;
+        app.focus_index = 9;
     } else if screen == Screen::Settings {
         app.set_screen(Screen::Settings);
         app.focus_index = 4;
@@ -418,7 +437,7 @@ fn run_window_app(mut app: App, live: Option<LiveClient>) -> Result<(), String> 
                             dispatch_action(live, &app, action);
                         }
                     }
-                    Keycode::Space => {
+                    Keycode::Space if !app.search_editing => {
                         if let Some(live) = &live {
                             flush_progress(&mut progress, &app, live);
                         }
@@ -590,6 +609,18 @@ fn dispatch_action(live: &LiveClient, app: &App, action: archiveplayer_webos::st
                 live.send(LiveCommand::LoadDetails(identifier));
             }
         }
+        Action::SubmitSearch => live.send(LiveCommand::Search {
+            query: app.archive_query.clone(),
+            page: 1,
+        }),
+        Action::AddResult(index) => {
+            if let Some(card) = app.archive_card(index) {
+                live.send(LiveCommand::AddToLibrary {
+                    identifier: card.identifier.clone(),
+                    category_name: None,
+                });
+            }
+        }
         Action::Pair | Action::PairRefresh => live.send(LiveCommand::StartPairing),
         Action::Reconnect => live.send(LiveCommand::Refresh),
         _ => {}
@@ -613,6 +644,7 @@ fn apply_live_event(app: &mut App, event: LiveEvent) {
             let url = app.server_url.clone();
             app.set_connection(name, url, String::new(), true, false);
             app.set_pairing_status(PairingStatus::Waiting);
+            app.reset_search_state();
             app.show_toast(reason);
         }
         LiveEvent::PairingCode {
@@ -637,6 +669,23 @@ fn apply_live_event(app: &mut App, event: LiveEvent) {
             let count = catalog.items.len();
             app.set_catalog(catalog);
             app.show_toast(format!("Loaded {count} titles"));
+        }
+        LiveEvent::SearchResults { query, response } => {
+            app.apply_archive_results(&query, *response);
+        }
+        LiveEvent::SearchFailed { query, message } => {
+            app.fail_archive_search(&query, message);
+        }
+        LiveEvent::Added { identifier, title } => {
+            app.finish_add(&identifier);
+            app.show_toast(format!("Added {title}"));
+        }
+        LiveEvent::AddFailed {
+            identifier,
+            message,
+        } => {
+            app.finish_add(&identifier);
+            app.show_toast(message);
         }
         LiveEvent::Details(details) => {
             let incompatible = details
