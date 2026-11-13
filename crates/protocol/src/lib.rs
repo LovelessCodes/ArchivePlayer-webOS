@@ -57,6 +57,8 @@ pub struct LibraryItem {
     pub thumbnail_url: Option<String>,
     #[serde(default)]
     pub tmdb_poster_url: Option<String>,
+    #[serde(default)]
+    pub tmdb_backdrop_url: Option<String>,
     #[serde(default = "default_category")]
     pub category_name: String,
     #[serde(default)]
@@ -220,6 +222,8 @@ pub struct MediaDetails {
     #[serde(default)]
     pub tmdb_poster_url: Option<String>,
     #[serde(default)]
+    pub tmdb_backdrop_url: Option<String>,
+    #[serde(default)]
     pub tmdb_id: Option<i64>,
     #[serde(default)]
     pub tmdb_media_type: Option<String>,
@@ -339,6 +343,18 @@ mod tests {
         let json = serde_json::to_string(&request).unwrap();
         assert!(json.contains("\"identifier\""));
         assert!(json.contains("\"categoryName\":\"Horror\""));
+    }
+
+    #[test]
+    fn reads_a_wide_backdrop_url() {
+        let item: LibraryItem = serde_json::from_str(
+            r#"{"id":1,"identifier":"night","title":"Night","tmdbBackdropUrl":"https://image.tmdb.org/t/p/w1280/a.jpg"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            item.tmdb_backdrop_url.as_deref(),
+            Some("https://image.tmdb.org/t/p/w1280/a.jpg")
+        );
     }
 
     #[test]

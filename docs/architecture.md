@@ -96,13 +96,20 @@ fills a title after `GET /api/playback/{identifier}?platform=webos`; a movie wit
 several video files stays a movie, while a TV item becomes a series with episode
 rows.
 
-The server does not expose a poster proxy. Live items therefore fetch their
-`posterUrl` directly on two poster threads, decode it off the render loop, and
-resize it to a 360×540 RGBA bitmap. Only portrait sources at least 240 px wide
-are accepted: Archive.org's item-image service returns a 180×101 frame and
-wide backdrops look worse than the procedural art, so both keep the fallback.
-Loaded posters survive a library refresh, and cards, the hero, and the detail
-screen all draw the same bitmap with a cover transform.
+The server does not proxy artwork. Live items fetch `posterUrl` and
+`tmdbBackdropUrl` directly on two artwork threads, decode them off the render
+loop, and keep two decoded bitmaps per title:
+
+- posters become 360×540; only portrait sources at least 240 px wide are
+  accepted, because Archive.org's item-image service returns a 180×101 frame;
+- backdrops become 960×540; sources must be at least 960 px wide and roughly
+  16:9, so a poster path or a low-resolution thumbnail cannot be stretched
+  across the hero.
+
+A failed download or guard is silent: the procedural art stays. Posters and
+backdrops survive a library refresh when their URL is unchanged. Cards use the
+poster, while the home hero, detail wash, and landscape rails prefer the wide
+backdrop.
 
 Category chips and search suggestions come from the loaded catalogue rather than
 a hardcoded genre list, so a live library with a single "Horror" category shows

@@ -262,7 +262,7 @@ fn write_live_screenshot(
     while Instant::now() < deadline {
         for event in live.events() {
             if let LiveEvent::Library(response) = &event {
-                queue_posters(&live, response, &app.library);
+                queue_artwork(&live, response, &app.library);
             }
             apply_live_event(&mut app, event);
         }
@@ -277,13 +277,19 @@ fn write_live_screenshot(
                 app.selected = 0;
                 app.set_screen(Screen::Detail);
                 app.focus_index = 1;
-                if !app.library.item(0).episodes.is_empty() {
+                let settled =
+                    library_seen.is_some_and(|seen| seen.elapsed() > Duration::from_secs(4));
+                if !app.library.item(0).episodes.is_empty()
+                    || app.library.item(0).backdrop.is_some()
+                    || settled
+                {
                     break;
                 }
             } else if screen == Screen::Home
                 && app.screen == Screen::Home
-                && (app.library.items.iter().any(|item| item.poster.is_some())
-                    || library_seen.is_some_and(|seen| seen.elapsed() > Duration::from_secs(3)))
+                && ((app.library.items.iter().any(|item| item.poster.is_some())
+                    && app.library.items.iter().any(|item| item.backdrop.is_some()))
+                    || library_seen.is_some_and(|seen| seen.elapsed() > Duration::from_secs(4)))
             {
                 break;
             } else if screen == Screen::Search && app.screen != Screen::Search {
@@ -489,7 +495,7 @@ fn run_window_app(mut app: App, live: Option<LiveClient>) -> Result<(), String> 
         if let Some(live) = &live {
             for event in live.events() {
                 if let LiveEvent::Library(response) = &event {
-                    queue_posters(live, response, &app.library);
+                    queue_artwork(live, response, &app.library);
                 }
                 apply_live_event(&mut app, event);
             }
@@ -515,7 +521,7 @@ fn run_window_app(mut app: App, live: Option<LiveClient>) -> Result<(), String> 
     Ok(())
 }
 
-fn queue_posters(
+fn queue_artwork(
     live: &LiveClient,
     response: &archiveplayer_tv_protocol::LibraryResponse,
     catalog: &Catalog,
@@ -526,18 +532,24 @@ fn queue_posters(
             if !seen.insert(item.identifier.clone()) {
                 continue;
             }
-            if catalog
-                .index_of(&item.identifier)
-                .is_some_and(|index| catalog.item(index).poster.is_some())
-            {
-                continue;
+            let existing = catalog.index_of(&item.identifier).map(|index| {
+                let item = catalog.item(index);
+                (item.poster.is_some(), item.backdrop.is_some())
+            });
+            let (has_poster, has_backdrop) = existing.unwrap_or((false, false));
+            if !has_poster {
+                if let Some(url) = item
+                    .tmdb_poster_url
+                    .clone()
+                    .or_else(|| item.thumbnail_url.clone())
+                {
+                    live.load_poster(item.identifier.clone(), url);
+                }
             }
-            if let Some(url) = item
-                .tmdb_poster_url
-                .clone()
-                .or_else(|| item.thumbnail_url.clone())
-            {
-                live.load_poster(item.identifier.clone(), url);
+            if !has_backdrop {
+                if let Some(url) = item.tmdb_backdrop_url.clone() {
+                    live.load_backdrop(item.identifier.clone(), url);
+                }
             }
         }
     }
@@ -721,6 +733,9 @@ fn apply_live_event(app: &mut App, event: LiveEvent) {
         }
         LiveEvent::Poster { identifier, image } => {
             app.library.set_poster(&identifier, image);
+        }
+        LiveEvent::Backdrop { identifier, image } => {
+            app.library.set_backdrop(&identifier, image);
         }
         LiveEvent::Error(message) => app.show_toast(message),
     }

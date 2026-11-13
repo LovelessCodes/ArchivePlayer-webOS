@@ -1050,25 +1050,35 @@ fn draw_detail(app: &App, canvas: &mut Canvas) {
     let item = app.selected_item();
     let detail = layout::detail(item.episodes.len());
 
-    canvas.fill_round_vertical_gradient(detail.backdrop, 0.0, item.palette.0, item.palette.1);
-    // Cinematic shapes.
-    let circle_center = (detail.backdrop.right() - 240, detail.backdrop.y + 190);
-    canvas.fill_circle(circle_center, 260.0, item.accent.with_alpha(26));
-    canvas.fill_circle(
-        (circle_center.0 + 60, circle_center.1 + 30),
-        140.0,
-        item.accent.with_alpha(18),
-    );
-    for offset in 0..7 {
-        let x = detail.backdrop.right() - 520 + offset * 64;
-        canvas.line(
-            x,
-            detail.backdrop.y,
-            x - 180,
-            detail.backdrop.bottom(),
-            1.0,
-            WHITE.with_alpha(10),
+    if let Some(backdrop) = &item.backdrop {
+        canvas.draw_image_cover(detail.backdrop, 0.0, backdrop);
+        canvas.fill_rect(detail.backdrop, Color::rgba(4, 6, 10, 52));
+        canvas.fill_vertical_gradient(
+            detail.backdrop,
+            Color::rgba(0, 0, 0, 0),
+            Color::rgba(0, 0, 0, 70),
         );
+    } else {
+        canvas.fill_round_vertical_gradient(detail.backdrop, 0.0, item.palette.0, item.palette.1);
+        // Cinematic shapes.
+        let circle_center = (detail.backdrop.right() - 240, detail.backdrop.y + 190);
+        canvas.fill_circle(circle_center, 260.0, item.accent.with_alpha(26));
+        canvas.fill_circle(
+            (circle_center.0 + 60, circle_center.1 + 30),
+            140.0,
+            item.accent.with_alpha(18),
+        );
+        for offset in 0..7 {
+            let x = detail.backdrop.right() - 520 + offset * 64;
+            canvas.line(
+                x,
+                detail.backdrop.y,
+                x - 180,
+                detail.backdrop.bottom(),
+                1.0,
+                WHITE.with_alpha(10),
+            );
+        }
     }
     canvas.fill_horizontal_gradient(
         Rect::new(
@@ -2110,20 +2120,31 @@ fn draw_toast(app: &App, canvas: &mut Canvas) {
 }
 
 fn draw_hero(canvas: &mut Canvas, rect: Rect, poster: Rect, item: &MediaItem, live: bool) {
-    canvas.fill_round_vertical_gradient(rect, 24.0, item.palette.0, item.palette.1);
-    canvas.fill_circle(
-        (rect.right() - 260, rect.y + 120),
-        250.0,
-        item.accent.with_alpha(36),
-    );
-    canvas.fill_circle(
-        (rect.right() - 140, rect.y + 300),
-        160.0,
-        item.accent.with_alpha(22),
-    );
-    for offset in 0..9 {
-        let x = rect.right() - 620 + offset * 80;
-        canvas.line(x, rect.y, x - 220, rect.bottom(), 1.0, WHITE.with_alpha(8));
+    if let Some(backdrop) = &item.backdrop {
+        canvas.draw_image_cover(rect, 24.0, backdrop);
+        canvas.fill_round_rect(rect, 24.0, Color::rgba(4, 6, 10, 58));
+        canvas.fill_round_vertical_gradient(
+            rect,
+            24.0,
+            Color::rgba(0, 0, 0, 0),
+            Color::rgba(0, 0, 0, 96),
+        );
+    } else {
+        canvas.fill_round_vertical_gradient(rect, 24.0, item.palette.0, item.palette.1);
+        canvas.fill_circle(
+            (rect.right() - 260, rect.y + 120),
+            250.0,
+            item.accent.with_alpha(36),
+        );
+        canvas.fill_circle(
+            (rect.right() - 140, rect.y + 300),
+            160.0,
+            item.accent.with_alpha(22),
+        );
+        for offset in 0..9 {
+            let x = rect.right() - 620 + offset * 80;
+            canvas.line(x, rect.y, x - 220, rect.bottom(), 1.0, WHITE.with_alpha(8));
+        }
     }
     canvas.fill_round_horizontal_gradient(
         Rect::new(rect.x, rect.y, 1080, rect.height),
@@ -2330,7 +2351,9 @@ fn draw_landscape(
     show_resume: bool,
     focused: bool,
 ) {
-    if let Some(poster) = &item.poster {
+    if let Some(backdrop) = &item.backdrop {
+        canvas.draw_image_cover(rect, 14.0, backdrop);
+    } else if let Some(poster) = &item.poster {
         canvas.draw_image_cover(rect, 14.0, poster);
     } else {
         canvas.fill_round_vertical_gradient(rect, 14.0, item.palette.0, item.palette.1);

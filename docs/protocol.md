@@ -108,11 +108,16 @@ open. Progress always wins over a guessed duration: use the plan length.
 
 ## Artwork
 
-The server returns absolute `thumbnailUrl`/`tmdbPosterUrl` values. The client
-fetches them directly from the public host, not through the server API. Private
-and loopback hosts are refused, responses are capped at 8 MiB, and only
-portrait images at least 240 px wide replace the procedural artwork. A failed
-download or decode is silent: the fallback stays on screen.
+The server returns absolute `thumbnailUrl`, `tmdbPosterUrl`, and
+`tmdbBackdropUrl` values. The client fetches them directly from the public host,
+not through the server API. Private and loopback hosts are refused, responses
+are capped at 8 MiB, and redirect targets are checked again after the request.
+
+Two derived bitmaps are kept per title: a 360×540 poster and a 960×540
+backdrop. Only portrait sources at least 240 px wide become posters, and only
+wide sources at least 960 px wide (roughly 16:9) become backdrops. Archive.org's
+180×101 item image therefore never gets stretched over the hero. A failed
+download, redirect, or aspect guard is silent: the procedural artwork stays.
 
 ## Failure mapping
 

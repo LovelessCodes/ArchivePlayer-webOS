@@ -43,6 +43,8 @@ pub struct MediaItem {
     pub file_count: usize,
     pub poster_url: Option<String>,
     pub poster: Option<Arc<Image>>,
+    pub backdrop_url: Option<String>,
+    pub backdrop: Option<Arc<Image>>,
     pub playback_plan: Option<PlaybackPlan>,
     pub palette: (Color, Color),
     pub accent: Color,
@@ -108,9 +110,9 @@ impl MediaItem {
         })
     }
 
-    /// A deterministic, non-photographic backdrop. The live client uses this
-    /// until poster decoding lands; it keeps every screen recognizable without
-    /// shipping copyrighted artwork.
+    /// A deterministic, non-photographic palette. It keeps every screen
+    /// recognizable while remote posters and wide backdrops load, and remains
+    /// the fallback when a source has no usable artwork.
     fn live_palette(identifier: &str) -> ((Color, Color), Color) {
         let mut hash = 0xcbf2_9ce4_8422_2325_u64;
         for byte in identifier.as_bytes() {
@@ -146,6 +148,8 @@ impl MediaItem {
             file_count: 0,
             poster_url: None,
             poster: None,
+            backdrop_url: None,
+            backdrop: None,
             playback_plan: None,
             palette: (Color::rgb(20, 23, 30), Color::rgb(7, 9, 13)),
             accent: Color::rgb(110, 150, 190),
@@ -184,6 +188,8 @@ impl MediaItem {
                 .clone()
                 .or_else(|| item.thumbnail_url.clone()),
             poster: None,
+            backdrop_url: item.tmdb_backdrop_url.clone(),
+            backdrop: None,
             playback_plan: None,
             palette,
             accent,
@@ -288,6 +294,9 @@ impl Catalog {
                     }
                     mapped.playback_plan = old.playback_plan.clone();
                     mapped.poster = old.poster.clone();
+                    if old.backdrop_url == mapped.backdrop_url {
+                        mapped.backdrop = old.backdrop.clone();
+                    }
                 }
                 items.push(mapped);
             }
@@ -310,6 +319,14 @@ impl Catalog {
             return false;
         };
         self.items[index].poster = Some(Arc::new(image));
+        true
+    }
+
+    pub fn set_backdrop(&mut self, identifier: &str, image: Image) -> bool {
+        let Some(index) = self.index_of(identifier) else {
+            return false;
+        };
+        self.items[index].backdrop = Some(Arc::new(image));
         true
     }
 
@@ -349,6 +366,11 @@ impl Catalog {
             .tmdb_poster_url
             .clone()
             .or_else(|| details.thumbnail_url.clone());
+        let previous_backdrop = item.backdrop_url.clone();
+        item.backdrop_url = details.tmdb_backdrop_url.clone();
+        if previous_backdrop != item.backdrop_url {
+            item.backdrop = None;
+        }
         item.playback_plan = details.playback_plan.clone();
         item.file_count = details
             .video_file_urls
@@ -485,6 +507,8 @@ fn movie(
         file_count: 1,
         poster_url: None,
         poster: None,
+        backdrop_url: None,
+        backdrop: None,
         playback_plan: None,
         palette: (hex(palette.0), hex(palette.1)),
         accent: hex(accent),
@@ -522,6 +546,8 @@ fn series(
         file_count: 1,
         poster_url: None,
         poster: None,
+        backdrop_url: None,
+        backdrop: None,
         playback_plan: None,
         palette: (hex(palette.0), hex(palette.1)),
         accent: hex(accent),
@@ -760,6 +786,7 @@ mod tests {
             media_type: "movies".into(),
             thumbnail_url: Some("https://archive.org/services/img/night".into()),
             tmdb_poster_url: None,
+            tmdb_backdrop_url: Some("https://image.tmdb.org/t/p/w1280/backdrop.jpg".into()),
             category_name: "Horror".into(),
             watch_progress_seconds: 120,
             duration_seconds: 5_760,
@@ -787,6 +814,10 @@ mod tests {
         assert_eq!(item.title, "Night of the Living Dead");
         assert_eq!(item.progress, Some((120, 5_760)));
         assert!(item.description.is_empty());
+        assert_eq!(
+            item.backdrop_url.as_deref(),
+            Some("https://image.tmdb.org/t/p/w1280/backdrop.jpg")
+        );
         assert_eq!(catalog.continue_watching(), vec![0]);
     }
 
@@ -808,6 +839,7 @@ mod tests {
             media_type: "movies".into(),
             thumbnail_url: None,
             tmdb_poster_url: None,
+            tmdb_backdrop_url: None,
             tmdb_id: None,
             tmdb_media_type: None,
             video_files: vec!["a.mp4".into(), "b.mp4".into()],
@@ -875,6 +907,23 @@ mod tests {
         assert!(!previous.set_poster("missing", Image::from_rgba(2, 2, vec![0; 16]).unwrap()));
         let next = Catalog::from_library(&response, &previous);
         assert!(next.item(0).poster.is_some());
+    }
+
+    #[test]
+    fn backdrops_survive_a_library_refresh() {
+        let response = LibraryResponse {
+            categories: vec![archiveplayer_tv_protocol::CategoryGroup {
+                name: "Horror".into(),
+                items: vec![library_item()],
+            }],
+            category_names: vec!["Horror".into()],
+            total_items: 1,
+        };
+        let mut previous = Catalog::from_library(&response, &Catalog::empty());
+        let image = Image::from_rgba(2, 2, [30, 60, 120, 255].repeat(4)).unwrap();
+        assert!(previous.set_backdrop("night_of_the_living_dead", image));
+        let next = Catalog::from_library(&response, &previous);
+        assert!(next.item(0).backdrop.is_some());
     }
 
     #[test]

@@ -8,8 +8,9 @@ WebView, no JavaScript runtime.
 
 > **Status: host preview with live server mode.** The native UI, focus model,
 > QR pairing screen, API worker, live library/detail loading, Archive.org search,
-> and add-to-library run on the host today. The webOS GLES2 backend and `com.webos.media` playback path still need a
-> hardware spike, and this repository is not yet installable on a television.
+> add-to-library, and remote poster/backdrop artwork run on the host today. The
+> webOS GLES2 backend and `com.webos.media` playback path still need a hardware
+> spike, and this repository is not yet installable on a television.
 
 ![ArchivePlayer webOS home screen](docs/screenshots/home.png)
 
@@ -47,7 +48,7 @@ deterministic screenshot mode that runs without a display.
 | Live pairing screen: code, QR, poll, token store | Done |
 | Archive.org search and one-key add to library | Done (live worker) |
 | Progress every 15 s, on pause, on Back, and at completion | Done (host loop) |
-| Remote poster decoding | Done (portrait posters; procedural fallback) |
+| Remote poster and wide backdrop decoding | Done (portrait posters, 16:9 backdrops, procedural fallback) |
 | mDNS `_archiveplayer._tcp` discovery | Interface only |
 | GLES2 renderer and `com.webos.media` playback | Not yet |
 | `.ipk` packaging and device install | Not yet |
@@ -174,7 +175,7 @@ silicon) or an **arm64** Linux host, install the NDK and the
    MP4 through `com.webos.media`.
 2. Add the webOS GLES2 backend and `com.webos.media` player, keeping the same
    screen state and draw calls.
-3. Wide backdrop artwork from Archive.org/TMDB, and result pagination.
+3. Result pagination and an artwork memory cap for very large libraries.
 4. mDNS discovery, Homebrew manifest, unsigned `.ipk` release.
 
 See [docs/architecture.md](docs/architecture.md) for the design and

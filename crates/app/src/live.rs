@@ -23,7 +23,7 @@ use archiveplayer_tv_protocol::{
 };
 
 use crate::pairing::{PairingFlow, PairingPoll};
-use crate::poster::decode_poster;
+use crate::poster::{decode_backdrop, decode_poster};
 
 const CLIENT_NAME: &str = "ArchivePlayer TV";
 const DEVICE_NAME: &str = "webOS TV";
@@ -78,6 +78,10 @@ pub enum LiveEvent {
         identifier: String,
         image: Image,
     },
+    Backdrop {
+        identifier: String,
+        image: Image,
+    },
     Error(String),
 }
 
@@ -112,48 +116,66 @@ pub struct LiveClient {
     commands: Sender<LiveCommand>,
     events: Receiver<LiveEvent>,
     worker: Option<JoinHandle<()>>,
-    posters: PosterQueue,
+    artwork: ArtworkQueue,
 }
 
-struct PosterRequest {
+#[derive(Debug, Clone, Copy)]
+enum ArtworkKind {
+    Poster,
+    Backdrop,
+}
+
+struct ArtworkRequest {
     identifier: String,
     url: String,
+    kind: ArtworkKind,
 }
 
 /// Two download/decode threads keep slow Archive.org thumbnails from starving
 /// each other while leaving the API worker free for pairing and playback.
-struct PosterQueue {
-    senders: Vec<Sender<PosterRequest>>,
+struct ArtworkQueue {
+    senders: Vec<Sender<ArtworkRequest>>,
     next: AtomicUsize,
     workers: Vec<JoinHandle<()>>,
 }
 
-impl PosterQueue {
+impl ArtworkQueue {
     fn start(events: Sender<LiveEvent>) -> Self {
         let mut senders = Vec::new();
         let mut workers = Vec::new();
         for index in 0..2 {
-            let (sender, receiver) = mpsc::channel::<PosterRequest>();
+            let (sender, receiver) = mpsc::channel::<ArtworkRequest>();
             senders.push(sender);
             let events = events.clone();
             workers.push(
                 thread::Builder::new()
-                    .name(format!("archiveplayer-poster-{index}"))
+                    .name(format!("archiveplayer-artwork-{index}"))
                     .spawn(move || {
                         while let Ok(request) = receiver.recv() {
                             let Ok(bytes) = fetch_image_bytes(&request.url) else {
                                 continue;
                             };
-                            let Ok(image) = decode_poster(&bytes) else {
+                            let image = match request.kind {
+                                ArtworkKind::Poster => decode_poster(&bytes),
+                                ArtworkKind::Backdrop => decode_backdrop(&bytes),
+                            };
+                            let Ok(image) = image else {
                                 continue;
                             };
-                            let _ = events.send(LiveEvent::Poster {
-                                identifier: request.identifier,
-                                image,
-                            });
+                            let event = match request.kind {
+                                ArtworkKind::Poster => LiveEvent::Poster {
+                                    identifier: request.identifier,
+                                    image,
+                                },
+                                ArtworkKind::Backdrop => LiveEvent::Backdrop {
+                                    identifier: request.identifier,
+                                    image,
+                                },
+                            };
+                            let _ = events.send(event);
                         }
                     })
-                    .expect("the poster worker thread should start"),
+                    .expect("the artwork worker thread should start"),
             );
         }
         Self {
@@ -163,16 +185,20 @@ impl PosterQueue {
         }
     }
 
-    fn enqueue(&self, identifier: String, url: String) {
+    fn enqueue(&self, identifier: String, url: String, kind: ArtworkKind) {
         if self.senders.is_empty() {
             return;
         }
         let index = self.next.fetch_add(1, Ordering::Relaxed) % self.senders.len();
-        let _ = self.senders[index].send(PosterRequest { identifier, url });
+        let _ = self.senders[index].send(ArtworkRequest {
+            identifier,
+            url,
+            kind,
+        });
     }
 }
 
-impl Drop for PosterQueue {
+impl Drop for ArtworkQueue {
     fn drop(&mut self) {
         self.senders.clear();
         for worker in self.workers.drain(..) {
@@ -185,7 +211,7 @@ impl LiveClient {
     pub fn start(target: ServerTarget, session_path: PathBuf) -> Self {
         let (command_tx, command_rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
-        let posters = PosterQueue::start(event_tx.clone());
+        let artwork = ArtworkQueue::start(event_tx.clone());
         let worker = thread::Builder::new()
             .name("archiveplayer-live".into())
             .spawn(move || Worker::new(target, session_path, event_tx).run(command_rx))
@@ -194,7 +220,7 @@ impl LiveClient {
             commands: command_tx,
             events: event_rx,
             worker: Some(worker),
-            posters,
+            artwork,
         }
     }
 
@@ -205,7 +231,13 @@ impl LiveClient {
     /// Queue artwork for a title. Failures fall back to procedural artwork, so
     /// the UI is never blocked or emptied by a poster.
     pub fn load_poster(&self, identifier: String, url: String) {
-        self.posters.enqueue(identifier, url);
+        self.artwork.enqueue(identifier, url, ArtworkKind::Poster);
+    }
+
+    /// Queue a wide backdrop. It is a separate slot from the poster, so a
+    /// source that only has 2:3 art still gets the procedural fallback here.
+    pub fn load_backdrop(&self, identifier: String, url: String) {
+        self.artwork.enqueue(identifier, url, ArtworkKind::Backdrop);
     }
 
     /// Drain events without blocking the render loop.
@@ -585,7 +617,7 @@ mod tests {
             commands: command_tx,
             events: event_rx,
             worker: None,
-            posters: PosterQueue {
+            artwork: ArtworkQueue {
                 senders: Vec::new(),
                 next: AtomicUsize::new(0),
                 workers: Vec::new(),
