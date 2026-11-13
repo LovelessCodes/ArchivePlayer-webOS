@@ -260,6 +260,13 @@ impl Drop for LiveClient {
 }
 
 fn same_server(left: &ServerTarget, right: &ServerTarget) -> bool {
+    // A stable mDNS ID lets a saved session follow a server to a new DHCP
+    // address. Short IDs are placeholders (for example "lan" from `--server`),
+    // so they must never make two different servers look interchangeable.
+    let stable_id = |id: &str| id.len() >= 12;
+    if stable_id(&left.id) && left.id == right.id {
+        return true;
+    }
     let normalize = |url: &str| url.trim_end_matches('/').to_string();
     normalize(&left.lan_url) == normalize(&right.lan_url)
         || match (&left.remote_url, &right.remote_url) {
@@ -323,9 +330,8 @@ impl Worker {
         let Some(session) = self.session.clone() else {
             return;
         };
-        match connect_target(&session.target, Some(session.token.clone())) {
+        match connect_target(&self.target, Some(session.token.clone())) {
             Ok(connected) => {
-                self.target = session.target.clone();
                 self.connected(connected);
                 self.refresh_library();
             }
@@ -607,6 +613,21 @@ mod tests {
         let other = ServerTarget::new("c", "Three", "http://192.168.1.21:8080").unwrap();
         assert!(same_server(&left, &same));
         assert!(!same_server(&left, &other));
+    }
+
+    #[test]
+    fn a_stable_discovery_id_follows_the_server_to_a_new_address() {
+        let id = "a".repeat(64);
+        let saved = ServerTarget::new(&id, "Living room", "http://192.168.1.20:8080").unwrap();
+        let moved = ServerTarget::new(&id, "Living room", "http://192.168.1.44:8080").unwrap();
+        assert!(same_server(&saved, &moved));
+    }
+
+    #[test]
+    fn placeholder_ids_do_not_share_a_session_across_servers() {
+        let left = ServerTarget::new("lan", "One", "http://192.168.1.20:8080").unwrap();
+        let right = ServerTarget::new("lan", "Two", "http://192.168.1.21:8080").unwrap();
+        assert!(!same_server(&left, &right));
     }
 
     #[test]

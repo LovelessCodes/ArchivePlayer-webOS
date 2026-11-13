@@ -18,6 +18,25 @@ is in the main repository's
 | `PUT` | `/api/playback/{identifier}/progress` | bearer | Save position/duration. |
 | `POST` | `/api/playback/{identifier}/completed` | bearer | Mark a file/title complete. |
 
+## Discovery
+
+Before any HTTP request, browse `_archiveplayer._tcp.local` and read:
+
+| TXT key | Use |
+| --- | --- |
+| `name` | Label for the server picker. |
+| `id` | Stable server ID; deduplicate and restore the saved session. |
+| `api` | API generation checked by the client version guard. |
+| `version` | Display the server version. |
+| `path` | Web root for the base URL. |
+| `addr` | Preferred LAN IPv4 address chosen by the server. |
+| `url` | Optional public HTTPS base URL for the remote fallback. |
+
+Build the LAN URL from `addr` when present, otherwise from a resolved private
+IPv4 address. Link-local IPv6 is not usable without a scope identifier, so it
+is ignored. Discovery is unauthenticated; treat an advertisement as a hint and
+let the health/API-version check make the final decision.
+
 ## Pairing
 
 ```json

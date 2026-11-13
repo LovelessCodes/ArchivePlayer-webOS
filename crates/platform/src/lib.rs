@@ -4,6 +4,10 @@
 //! host tests use the same interfaces with a temporary file or memory store.
 
 use archiveplayer_tv_api::StoredSession;
+
+mod discovery;
+
+pub use discovery::{DiscoveryError, MdnsDiscovery, SERVICE_TYPE};
 use std::fmt;
 use std::fs;
 use std::io;
@@ -136,8 +140,8 @@ pub trait ServerDiscovery {
     fn browse(&self, timeout: Duration) -> Result<Vec<DiscoveredServer>, Self::Error>;
 }
 
-/// Host/no-op discovery. The webOS implementation will browse
-/// `_archiveplayer._tcp.local` and return the same shape.
+/// No-op discovery for tests and hosts without multicast. The real
+/// implementation is [`MdnsDiscovery`].
 pub struct NoopDiscovery;
 
 impl ServerDiscovery for NoopDiscovery {

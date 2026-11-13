@@ -15,3 +15,6 @@ archiveplayer-tv-protocol = { path = "../protocol" }
 archiveplayer-tv-ui = { path = "../ui" }
 archiveplayer-webos = { path = "../app" }
 sdl2 = "0.37"
+
+[dev-dependencies]
+tempfile = "3"

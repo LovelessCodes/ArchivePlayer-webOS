@@ -83,9 +83,17 @@ code and the bearer token.
 `app::live::LiveClient` runs the exchange on the API worker. The simulator's
 `--server <url> --session <path>` mode displays the live code and QR, polls
 until approval, stores the token, and then loads the library. A saved session is
-reused only when its server URL matches `--server`; otherwise the worker clears
-it and pairs against the requested server. `--pair` remains a terminal-only
-check for the same exchange.
+reused when its stable discovery ID or server URL matches the requested target;
+otherwise the worker clears it and pairs against the requested server. Matching
+by ID lets the session follow a server to a new DHCP address. `--pair` remains a
+terminal-only check for the same exchange.
+
+`--discover` and `--list-servers` use `MdnsDiscovery` from `platform`. Browsing
+skips advertisements without a stable ID and an `api` version. The server's
+`addr` TXT hint wins over the resolved address set because a host with Docker
+bridges or IPv6 link-local addresses can otherwise advertise an address the TV
+cannot reach. Results are deduplicated by ID and sorted by name; a saved stable
+ID breaks a tie, otherwise the CLI asks for `--name` or `--server-id`.
 
 ## Live catalogue
 
@@ -190,7 +198,9 @@ set; if a file is not directly playable the plan should say so.
 - `SecretStore`: one `StoredSession` in v1. `FileSecretStore` writes JSON to the
   app data directory with mode `0600`; `MemorySecretStore` is for tests.
 - `ServerDiscovery`: browse `_archiveplayer._tcp.local`, read the `name`, `id`,
-  `api`, `version`, `path`, and `url` TXT records. The host build uses a no-op.
+  `api`, `version`, `path`, `addr`, and `url` TXT records. `MdnsDiscovery` is the
+  host implementation; `NoopDiscovery` keeps tests and shells without multicast
+  independent of the network.
 - `Screen`/`navigate`: spatial focus for the home hero, sidebar, poster grids,
   episode lists, and player controls. `FocusGrid` remains for dense rows.
 
@@ -203,6 +213,8 @@ set; if a file is not directly playable the plan should say so.
   a screenshot.
 - Windowed live: `--server <url>` starts the API worker. Actions dispatch
   `LoadDetails` and `Refresh`; `Pair` and `PairRefresh` start a new grant.
+  `--discover` replaces the URL with an mDNS lookup, and `--list-servers` prints
+  the LAN result without opening a window.
 - Headless: `--all`, `--screenshot`, and `--live-shot` render to PNG without
   initializing video, so CI and screenshots work over SSH.
 

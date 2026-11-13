@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 
 use archiveplayer_tv_api::ServerTarget;
 use archiveplayer_tv_gfx::Canvas;
-use archiveplayer_tv_platform::{FileSecretStore, SecretStore};
+use archiveplayer_tv_platform::{
+    DiscoveredServer, FileSecretStore, MdnsDiscovery, SecretStore, ServerDiscovery,
+};
 use archiveplayer_tv_ui::Screen;
 use archiveplayer_webos::catalog::Catalog;
 use archiveplayer_webos::live::{LiveClient, LiveCommand, LiveEvent, PairingView};
@@ -46,28 +48,35 @@ fn main() -> Result<(), String> {
         return pair_in_terminal(url, session_path);
     }
 
+    if args.iter().any(|arg| arg == "--list-servers") {
+        let servers = discover_servers(discovery_timeout(&args)?)?;
+        print_servers(&servers, &session_path(&args));
+        return Ok(());
+    }
+
+    if args.iter().any(|arg| arg == "--discover") {
+        let servers = discover_servers(discovery_timeout(&args)?)?;
+        let path = session_path(&args);
+        let server = choose_server(&servers, &args, &path)?;
+        print_servers(&servers, &path);
+        println!(
+            "Connecting to {} at {}",
+            server.name,
+            display_server(&server.lan_url)
+        );
+        let target = target_from_server(server)?;
+        if let Some((path, screen)) = live_shot_request(&args)? {
+            return write_live_screenshot_target(target, session_path(&args), &path, screen);
+        }
+        return run_live_window_target(target, session_path(&args));
+    }
+
     if let Some(index) = args.iter().position(|arg| arg == "--server") {
         let url = args
             .get(index + 1)
             .ok_or_else(|| "--server needs a URL".to_string())?;
-        let session_path = args
-            .iter()
-            .position(|arg| arg == "--session")
-            .and_then(|position| args.get(position + 1))
-            .map(PathBuf::from)
-            .unwrap_or_else(default_session_path);
-        if let Some(index) = args.iter().position(|arg| arg == "--live-shot") {
-            let path = args
-                .get(index + 1)
-                .map(PathBuf::from)
-                .ok_or_else(|| "--live-shot needs a path".to_string())?;
-            let screen = args
-                .iter()
-                .position(|arg| arg == "--live-screen")
-                .and_then(|position| args.get(position + 1))
-                .map(|name| parse_screen(name))
-                .transpose()?
-                .unwrap_or(Screen::Home);
+        let session_path = session_path(&args);
+        if let Some((path, screen)) = live_shot_request(&args)? {
             return write_live_screenshot(url, session_path, &path, screen);
         }
         return run_live_window(url, session_path);
@@ -105,6 +114,9 @@ fn print_help() {
     println!("  cargo run -p archiveplayer-webos-sim");
     println!("  cargo run -p archiveplayer-webos-sim -- --screenshot out.png --screen home");
     println!("  cargo run -p archiveplayer-webos-sim -- --all docs/screenshots");
+    println!("  cargo run -p archiveplayer-webos-sim -- --list-servers");
+    println!("  cargo run -p archiveplayer-webos-sim -- --discover");
+    println!("  cargo run -p archiveplayer-webos-sim -- --discover --name \"Living room\"");
     println!("  cargo run -p archiveplayer-webos-sim -- --server http://192.168.1.20:8080");
     println!("  cargo run -p archiveplayer-webos-sim -- --server URL --live-shot home.png");
     println!("  cargo run -p archiveplayer-webos-sim -- --pair http://192.168.1.20:8080");
@@ -252,7 +264,16 @@ fn write_live_screenshot(
 ) -> Result<(), String> {
     let target =
         ServerTarget::new("lan", "ArchivePlayer", url).map_err(|error| error.to_string())?;
-    let mut app = App::live("ArchivePlayer", target.lan_url.clone());
+    write_live_screenshot_target(target, session_path, path, screen)
+}
+
+fn write_live_screenshot_target(
+    target: ServerTarget,
+    session_path: PathBuf,
+    path: &Path,
+    screen: Screen,
+) -> Result<(), String> {
+    let mut app = App::live(target.name.clone(), target.lan_url.clone());
     let live = LiveClient::start(target, session_path);
     let deadline = Instant::now() + Duration::from_secs(12);
     let mut loaded_details = false;
@@ -351,6 +372,171 @@ fn write_live_screenshot(
     Ok(())
 }
 
+fn arg_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    args.iter()
+        .position(|arg| arg == flag)
+        .and_then(|index| args.get(index + 1))
+        .map(String::as_str)
+}
+
+fn session_path(args: &[String]) -> PathBuf {
+    arg_value(args, "--session")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_session_path)
+}
+
+fn discovery_timeout(args: &[String]) -> Result<Duration, String> {
+    let Some(raw) = arg_value(args, "--discover-timeout") else {
+        return Ok(Duration::from_secs(3));
+    };
+    let seconds = raw
+        .parse::<u64>()
+        .map_err(|_| "--discover-timeout needs a whole number of seconds".to_string())?;
+    if !(1..=30).contains(&seconds) {
+        return Err("--discover-timeout must be between 1 and 30 seconds".into());
+    }
+    Ok(Duration::from_secs(seconds))
+}
+
+fn live_shot_request(args: &[String]) -> Result<Option<(PathBuf, Screen)>, String> {
+    let Some(path) = arg_value(args, "--live-shot") else {
+        return Ok(None);
+    };
+    let screen = arg_value(args, "--live-screen")
+        .map(parse_screen)
+        .transpose()?
+        .unwrap_or(Screen::Home);
+    Ok(Some((PathBuf::from(path), screen)))
+}
+
+fn discover_servers(timeout: Duration) -> Result<Vec<DiscoveredServer>, String> {
+    println!(
+        "Browsing _archiveplayer._tcp.local for {} second(s)…",
+        timeout.as_secs()
+    );
+    MdnsDiscovery
+        .browse(timeout)
+        .map_err(|error| error.to_string())
+}
+
+fn target_from_server(server: &DiscoveredServer) -> Result<ServerTarget, String> {
+    let mut target = ServerTarget::new(&server.id, &server.name, &server.lan_url)
+        .map_err(|error| error.to_string())?;
+    if let Some(remote) = &server.remote_url {
+        target = target
+            .with_remote(remote)
+            .map_err(|error| error.to_string())?;
+    }
+    target.api_version = server.api_version;
+    target.server_version = server.version.clone();
+    Ok(target)
+}
+
+fn choose_server<'a>(
+    servers: &'a [DiscoveredServer],
+    args: &[String],
+    session_path: &Path,
+) -> Result<&'a DiscoveredServer, String> {
+    if servers.is_empty() {
+        return Err(
+            "No ArchivePlayer servers found on this network. Check that the server is bound to 0.0.0.0, ARCHIVEPLAYER_MDNS is enabled, and the TV and server are on the same LAN."
+                .into(),
+        );
+    }
+
+    let name = arg_value(args, "--name").map(str::to_ascii_lowercase);
+    let server_id = arg_value(args, "--server-id");
+    let filtered: Vec<&DiscoveredServer> = servers
+        .iter()
+        .filter(|server| {
+            name.as_ref().is_none_or(|name| {
+                server.name.to_ascii_lowercase().contains(name)
+                    || server.id.to_ascii_lowercase().contains(name)
+            })
+        })
+        .filter(|server| {
+            server_id.is_none_or(|id| {
+                server.id == id
+                    || (id.len() >= 8 && server.id.starts_with(&id.to_ascii_lowercase()))
+            })
+        })
+        .collect();
+
+    if filtered.is_empty() {
+        return Err(format!(
+            "No discovered server matches {}. Found: {}",
+            name.or_else(|| server_id.map(str::to_string))
+                .unwrap_or_else(|| "the filter".into()),
+            servers
+                .iter()
+                .map(|server| server.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if filtered.len() == 1 {
+        return Ok(filtered[0]);
+    }
+
+    let saved_id = FileSecretStore::new(session_path)
+        .load()
+        .ok()
+        .flatten()
+        .map(|session| session.target.id);
+    if let Some(id) = saved_id {
+        if let Some(server) = filtered
+            .iter()
+            .find(|server| server.id == id && id.len() >= 12)
+        {
+            return Ok(server);
+        }
+    }
+
+    Err(format!(
+        "Found {} servers: {}. Choose one with --name <text> or --server-id <id>.",
+        filtered.len(),
+        filtered
+            .iter()
+            .map(|server| server.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
+fn print_servers(servers: &[DiscoveredServer], session_path: &Path) {
+    if servers.is_empty() {
+        println!("No ArchivePlayer servers found.");
+        return;
+    }
+    let paired_id = FileSecretStore::new(session_path)
+        .load()
+        .ok()
+        .flatten()
+        .map(|session| session.target.id);
+    println!("{} server(s) found:", servers.len());
+    for server in servers {
+        let paired = paired_id
+            .as_deref()
+            .is_some_and(|id| id == server.id && id.len() >= 12);
+        println!(
+            "  {} ({}): {}{}",
+            server.name,
+            server.id,
+            display_server(&server.lan_url),
+            if paired { "  [paired]" } else { "" }
+        );
+        if let Some(remote) = &server.remote_url {
+            println!("    remote: {remote}");
+        }
+        let version = server.version.as_deref().unwrap_or("unknown");
+        println!("    API {} · server {version}", server.api_version);
+    }
+}
+
+fn display_server(url: &str) -> String {
+    url.trim_end_matches('/').to_string()
+}
+
 fn run_window() -> Result<(), String> {
     run_window_app(App::demo(), None)
 }
@@ -358,7 +544,11 @@ fn run_window() -> Result<(), String> {
 fn run_live_window(url: &str, session_path: PathBuf) -> Result<(), String> {
     let target =
         ServerTarget::new("lan", "ArchivePlayer", url).map_err(|error| error.to_string())?;
-    let app = App::live("ArchivePlayer", target.lan_url.clone());
+    run_live_window_target(target, session_path)
+}
+
+fn run_live_window_target(target: ServerTarget, session_path: PathBuf) -> Result<(), String> {
+    let app = App::live(target.name.clone(), target.lan_url.clone());
     let live = LiveClient::start(target, session_path);
     run_window_app(app, Some(live))
 }
@@ -746,4 +936,97 @@ fn upload_texture(texture: &mut Texture, canvas: &Canvas) -> Result<(), String> 
     texture
         .update(None, canvas.pixels(), pitch)
         .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use archiveplayer_tv_api::StoredSession;
+    use archiveplayer_tv_protocol::User;
+
+    fn server(name: &str, id: &str, url: &str) -> DiscoveredServer {
+        DiscoveredServer {
+            id: id.into(),
+            name: name.into(),
+            lan_url: url.into(),
+            remote_url: None,
+            api_version: 1,
+            version: Some("0.5.0".into()),
+        }
+    }
+
+    #[test]
+    fn one_discovered_server_is_selected_without_a_prompt() {
+        let path = Path::new("/does/not/exist/session.json");
+        let servers = vec![server(
+            "Living room",
+            &"a".repeat(64),
+            "http://192.168.1.44:8080/",
+        )];
+        let chosen = choose_server(&servers, &["--discover".into()], path).unwrap();
+        assert_eq!(chosen.name, "Living room");
+    }
+
+    #[test]
+    fn multiple_servers_need_a_name_or_id() {
+        let path = Path::new("/does/not/exist/session.json");
+        let servers = vec![
+            server("Living room", &"a".repeat(64), "http://192.168.1.44:8080/"),
+            server("Attic", &"b".repeat(64), "http://192.168.1.45:8080/"),
+        ];
+        assert!(choose_server(&servers, &["--discover".into()], path).is_err());
+
+        let args = ["--discover".into(), "--name".into(), "attic".into()];
+        let chosen = choose_server(&servers, &args, path).unwrap();
+        assert_eq!(chosen.name, "Attic");
+    }
+
+    #[test]
+    fn a_saved_stable_id_breaks_a_tie() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.json");
+        let id = "a".repeat(64);
+        let store = FileSecretStore::new(&path);
+        store
+            .save(&StoredSession {
+                target: ServerTarget::new(&id, "Living room", "http://192.168.1.44:8080").unwrap(),
+                token: "0123456789abcdef".into(),
+                user: User {
+                    id: 1,
+                    email: "owner@example.com".into(),
+                    display_name: None,
+                    created_at: None,
+                },
+                device_name: "webOS TV".into(),
+            })
+            .unwrap();
+        let servers = vec![
+            server("Attic", &"b".repeat(64), "http://192.168.1.45:8080/"),
+            server("Living room", &id, "http://192.168.1.44:8080/"),
+        ];
+        let chosen = choose_server(&servers, &["--discover".into()], &path).unwrap();
+        assert_eq!(chosen.id, id);
+    }
+
+    #[test]
+    fn remote_url_is_carried_into_the_target() {
+        let mut server = server("Living room", &"a".repeat(64), "http://192.168.1.44:8080/");
+        server.remote_url = Some("https://media.example.com/".into());
+        let target = target_from_server(&server).unwrap();
+        assert_eq!(target.lan_url, "http://192.168.1.44:8080/");
+        assert_eq!(
+            target.remote_url.as_deref(),
+            Some("https://media.example.com/")
+        );
+        assert_eq!(target.api_version, 1);
+    }
+
+    #[test]
+    fn discovery_timeout_is_bounded() {
+        let args = ["--discover-timeout".into(), "0".into()];
+        assert!(discovery_timeout(&args).is_err());
+        let args = ["--discover-timeout".into(), "5".into()];
+        assert_eq!(discovery_timeout(&args).unwrap(), Duration::from_secs(5));
+        assert_eq!(discovery_timeout(&[]).unwrap(), Duration::from_secs(3));
+    }
 }

@@ -8,7 +8,8 @@ WebView, no JavaScript runtime.
 
 > **Status: host preview with live server mode.** The native UI, focus model,
 > QR pairing screen, API worker, live library/detail loading, Archive.org search,
-> add-to-library, and remote poster/backdrop artwork run on the host today. The
+> add-to-library, mDNS server discovery, and remote poster/backdrop artwork run
+> on the host today. The
 > webOS GLES2 backend and `com.webos.media` playback path still need a hardware
 > spike, and this repository is not yet installable on a television.
 
@@ -49,7 +50,7 @@ deterministic screenshot mode that runs without a display.
 | Archive.org search and one-key add to library | Done (live worker) |
 | Progress every 15 s, on pause, on Back, and at completion | Done (host loop) |
 | Remote poster and wide backdrop decoding | Done (portrait posters, 16:9 backdrops, procedural fallback) |
-| mDNS `_archiveplayer._tcp` discovery | Interface only |
+| mDNS `_archiveplayer._tcp` discovery | Done (host + TXT address hint) |
 | GLES2 renderer and `com.webos.media` playback | Not yet |
 | `.ipk` packaging and device install | Not yet |
 
@@ -97,6 +98,19 @@ cargo run -p archiveplayer-webos-sim -- \
   --session ~/.local/share/archiveplayer-webos/session.json
 ```
 
+Or let the client find it on the LAN:
+
+```sh
+cargo run -p archiveplayer-webos-sim -- --list-servers
+cargo run -p archiveplayer-webos-sim -- --discover
+```
+
+`--discover` browses `_archiveplayer._tcp.local`, picks the saved server by its
+stable ID when possible, and starts the live client. If several servers are
+present, choose one with `--name "Living room"` or `--server-id <id>`. A saved
+session follows the same server to a new DHCP address; manually entered
+`--server` sessions keep their old URL binding and pair again once.
+
 With no saved session, the pairing screen appears with a live code and QR. After
 approval the worker stores the token, loads the library, and switches to Home.
 The same mode can render a live frame without a display:
@@ -108,8 +122,9 @@ cargo run -p archiveplayer-webos-sim -- \
   --live-shot /tmp/live-home.png
 ```
 
-Use `--live-screen detail` or `--live-screen settings` to capture another
-screen. The session is written with mode `0600`; the token is never printed.
+The discovery path takes the same screenshot options, for example
+`--discover --live-shot /tmp/live-home.png`. Use `--live-screen detail` or
+`--live-screen settings` to capture another screen. The session is written with mode `0600`; the token is never printed.
 
 On Search, type a title and press ENTER. The worker queries
 `GET /api/search`, and the six result rows show **ADD** or **IN LIBRARY**.
@@ -176,7 +191,7 @@ silicon) or an **arm64** Linux host, install the NDK and the
 2. Add the webOS GLES2 backend and `com.webos.media` player, keeping the same
    screen state and draw calls.
 3. Result pagination and an artwork memory cap for very large libraries.
-4. mDNS discovery, Homebrew manifest, unsigned `.ipk` release.
+4. Homebrew manifest and an unsigned `.ipk` release.
 
 See [docs/architecture.md](docs/architecture.md) for the design and
 [docs/protocol.md](docs/protocol.md) for the API surface this client uses.
