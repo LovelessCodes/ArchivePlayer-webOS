@@ -7,6 +7,7 @@
 use archiveplayer_tv_protocol as proto;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::io::Read;
 use std::time::Duration;
 use thiserror::Error;
 use url::Url;
@@ -17,6 +18,9 @@ pub use server_url::{display_server_url, is_private_host, normalize_server_url};
 /// The contract generation this client understands.
 pub const API_VERSION: u32 = 1;
 pub const DEFAULT_USER_AGENT: &str = concat!("ArchivePlayer-webOS/", env!("CARGO_PKG_VERSION"));
+/// Artwork is small; a larger response is treated as an error instead of being
+/// buffered on the television.
+pub const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum ApiError {
@@ -59,6 +63,63 @@ impl ApiError {
             _ => None,
         }
     }
+}
+
+/// Download artwork from an absolute public URL.
+///
+/// The URL comes from the server's metadata (TMDB or the Internet Archive).
+/// Private and loopback hosts are refused so a compromised or misconfigured
+/// server cannot turn the TV into a scanner for the local network.
+fn public_image_url(url: &str) -> Result<Url, ApiError> {
+    let parsed = Url::parse(url).map_err(|error| ApiError::InvalidUrl(error.to_string()))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(ApiError::InvalidUrl(
+            "artwork must use HTTP or HTTPS".into(),
+        ));
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| ApiError::InvalidUrl("artwork URL has no host".into()))?;
+    if is_private_host(host) {
+        return Err(ApiError::InvalidUrl(
+            "refusing to fetch artwork from a private host".into(),
+        ));
+    }
+    Ok(parsed)
+}
+
+pub fn fetch_image_bytes(url: &str) -> Result<Vec<u8>, ApiError> {
+    public_image_url(url)?;
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(5))
+        .timeout_read(Duration::from_secs(20))
+        .timeout_write(Duration::from_secs(5))
+        .user_agent(DEFAULT_USER_AGENT)
+        .build();
+    let response = agent
+        .get(url)
+        .set("Accept", "image/*")
+        .call()
+        .map_err(ureq_error)?;
+    // A public URL can redirect to a private address; validate the final hop
+    // before reading any body.
+    public_image_url(response.get_url())?;
+    if response
+        .header("Content-Length")
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .is_some_and(|length| length > MAX_IMAGE_BYTES)
+    {
+        return Err(ApiError::Decode("artwork is too large".into()));
+    }
+    let mut reader = response.into_reader().take(MAX_IMAGE_BYTES as u64 + 1);
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(|error| ApiError::Decode(error.to_string()))?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err(ApiError::Decode("artwork is too large".into()));
+    }
+    Ok(bytes)
 }
 
 #[derive(Clone)]
@@ -514,6 +575,18 @@ mod tests {
             target.remote_url.as_deref(),
             Some("https://media.example.com/")
         );
+    }
+
+    #[test]
+    fn refuses_private_artwork_hosts() {
+        for url in [
+            "http://127.0.0.1:8080/poster.jpg",
+            "http://192.168.1.2/poster.jpg",
+            "http://localhost/poster.jpg",
+            "file:///tmp/poster.jpg",
+        ] {
+            assert!(fetch_image_bytes(url).is_err(), "{url} should be refused");
+        }
     }
 
     #[test]

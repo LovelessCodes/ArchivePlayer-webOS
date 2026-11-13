@@ -3,8 +3,9 @@
 //! Titles are public-domain films; the artwork is generated so the repository
 //! ships no unlicensed poster images.
 
-use archiveplayer_tv_gfx::Color;
+use archiveplayer_tv_gfx::{Color, Image};
 use archiveplayer_tv_protocol::{LibraryItem, LibraryResponse, MediaDetails, PlaybackPlan};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaType {
@@ -39,6 +40,7 @@ pub struct MediaItem {
     pub episodes: Vec<EpisodeView>,
     pub file_count: usize,
     pub poster_url: Option<String>,
+    pub poster: Option<Arc<Image>>,
     pub playback_plan: Option<PlaybackPlan>,
     pub palette: (Color, Color),
     pub accent: Color,
@@ -141,6 +143,7 @@ impl MediaItem {
             episodes: Vec::new(),
             file_count: 0,
             poster_url: None,
+            poster: None,
             playback_plan: None,
             palette: (Color::rgb(20, 23, 30), Color::rgb(7, 9, 13)),
             accent: Color::rgb(110, 150, 190),
@@ -178,6 +181,7 @@ impl MediaItem {
                 .tmdb_poster_url
                 .clone()
                 .or_else(|| item.thumbnail_url.clone()),
+            poster: None,
             playback_plan: None,
             palette,
             accent,
@@ -250,6 +254,7 @@ impl Catalog {
                         mapped.episodes = old.episodes.clone();
                     }
                     mapped.playback_plan = old.playback_plan.clone();
+                    mapped.poster = old.poster.clone();
                 }
                 items.push(mapped);
             }
@@ -265,6 +270,14 @@ impl Catalog {
         self.items
             .get(index)
             .unwrap_or_else(|| MediaItem::placeholder())
+    }
+
+    pub fn set_poster(&mut self, identifier: &str, image: Image) -> bool {
+        let Some(index) = self.index_of(identifier) else {
+            return false;
+        };
+        self.items[index].poster = Some(Arc::new(image));
+        true
     }
 
     pub fn index_of(&self, identifier: &str) -> Option<usize> {
@@ -438,6 +451,7 @@ fn movie(
         episodes: Vec::new(),
         file_count: 1,
         poster_url: None,
+        poster: None,
         playback_plan: None,
         palette: (hex(palette.0), hex(palette.1)),
         accent: hex(accent),
@@ -474,6 +488,7 @@ fn series(
         episodes,
         file_count: 1,
         poster_url: None,
+        poster: None,
         playback_plan: None,
         palette: (hex(palette.0), hex(palette.1)),
         accent: hex(accent),
@@ -809,6 +824,24 @@ mod tests {
         assert_eq!(item.media_type, MediaType::Movie);
         assert!(item.episodes.is_empty());
         assert!(item.playback_plan.is_some());
+    }
+
+    #[test]
+    fn posters_survive_a_library_refresh() {
+        let response = LibraryResponse {
+            categories: vec![archiveplayer_tv_protocol::CategoryGroup {
+                name: "Horror".into(),
+                items: vec![library_item()],
+            }],
+            category_names: vec!["Horror".into()],
+            total_items: 1,
+        };
+        let mut previous = Catalog::from_library(&response, &Catalog::empty());
+        let image = Image::from_rgba(2, 2, [120, 20, 10, 255].repeat(4)).unwrap();
+        assert!(previous.set_poster("night_of_the_living_dead", image));
+        assert!(!previous.set_poster("missing", Image::from_rgba(2, 2, vec![0; 16]).unwrap()));
+        let next = Catalog::from_library(&response, &previous);
+        assert!(next.item(0).poster.is_some());
     }
 
     #[test]

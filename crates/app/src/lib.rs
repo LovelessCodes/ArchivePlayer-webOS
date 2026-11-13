@@ -8,6 +8,7 @@ pub mod catalog;
 pub mod layout;
 pub mod live;
 pub mod pairing;
+pub mod poster;
 pub mod progress;
 pub mod render;
 pub mod state;

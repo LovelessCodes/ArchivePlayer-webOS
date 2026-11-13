@@ -96,9 +96,13 @@ fills a title after `GET /api/playback/{identifier}?platform=webos`; a movie wit
 several video files stays a movie, while a TV item becomes a series with episode
 rows.
 
-The server does not expose a poster proxy, so live cards currently use the same
-deterministic procedural artwork as the demo. `poster_url` is retained on each
-item for the image-decoding milestone.
+The server does not expose a poster proxy. Live items therefore fetch their
+`posterUrl` directly on two poster threads, decode it off the render loop, and
+resize it to a 360×540 RGBA bitmap. Only portrait sources at least 240 px wide
+are accepted: Archive.org's item-image service returns a 180×101 frame and
+wide backdrops look worse than the procedural art, so both keep the fallback.
+Loaded posters survive a library refresh, and cards, the hero, and the detail
+screen all draw the same bitmap with a cover transform.
 
 Category chips and search suggestions come from the loaded catalogue rather than
 a hardcoded genre list, so a live library with a single "Horror" category shows

@@ -5,8 +5,8 @@
 //! batches without changing screen code.
 
 use tiny_skia::{
-    Color as SkColor, FillRule, Paint, PathBuilder, Pixmap, Rect as SkRect, Stroke as SkStroke,
-    Transform,
+    Color as SkColor, FillRule, FilterQuality, Paint, PathBuilder, Pattern, Pixmap, Rect as SkRect,
+    SpreadMode, Stroke as SkStroke, Transform,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +119,52 @@ impl Color {
 
     fn skia(self) -> SkColor {
         SkColor::from_rgba8(self.r, self.g, self.b, self.a)
+    }
+}
+
+/// A decoded RGBA image ready to be drawn by the software canvas or uploaded as
+/// a GLES2 texture. Pixels are premultiplied, matching `tiny-skia`.
+#[derive(Clone)]
+pub struct Image {
+    pixmap: Pixmap,
+}
+
+impl std::fmt::Debug for Image {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Image")
+            .field("width", &self.width())
+            .field("height", &self.height())
+            .finish()
+    }
+}
+
+impl Image {
+    /// Build an image from straight (non-premultiplied) RGBA bytes.
+    pub fn from_rgba(width: u32, height: u32, mut pixels: Vec<u8>) -> Result<Self, String> {
+        let expected = width as usize * height as usize * 4;
+        if width == 0 || height == 0 || pixels.len() != expected {
+            return Err("image dimensions do not match the pixel buffer".into());
+        }
+        for pixel in pixels.chunks_exact_mut(4) {
+            let alpha = u16::from(pixel[3]);
+            for channel in &mut pixel[..3] {
+                *channel = ((u16::from(*channel) * alpha) / 255) as u8;
+            }
+        }
+        let size = tiny_skia::IntSize::from_wh(width, height)
+            .ok_or_else(|| "image is too large".to_string())?;
+        let pixmap = Pixmap::from_vec(pixels, size)
+            .ok_or_else(|| "could not allocate the image".to_string())?;
+        Ok(Self { pixmap })
+    }
+
+    pub fn width(&self) -> u32 {
+        self.pixmap.width()
+    }
+
+    pub fn height(&self) -> u32 {
+        self.pixmap.height()
     }
 }
 
@@ -444,6 +490,43 @@ impl Canvas {
         }
     }
 
+    /// Draw an image so it covers `rect`, cropping the longer axis, clipped to
+    /// a rounded rectangle. The source is sampled bilinearly by tiny-skia.
+    pub fn draw_image_cover(&mut self, rect: Rect, radius: f32, image: &Image) {
+        if rect.width <= 0 || rect.height <= 0 || image.width() == 0 || image.height() == 0 {
+            return;
+        }
+        let Some(path) = round_rect_path(rect, radius) else {
+            return;
+        };
+        let scale = (rect.width as f32 / image.width() as f32)
+            .max(rect.height as f32 / image.height() as f32);
+        let width = image.width() as f32 * scale;
+        let height = image.height() as f32 * scale;
+        let x = rect.x as f32 + (rect.width as f32 - width) / 2.0;
+        let y = rect.y as f32 + (rect.height as f32 - height) / 2.0;
+        let transform = Transform::from_translate(x, y).pre_scale(scale, scale);
+        let pattern = Pattern::new(
+            image.pixmap.as_ref(),
+            SpreadMode::Pad,
+            FilterQuality::Bilinear,
+            1.0,
+            transform,
+        );
+        let paint = Paint {
+            shader: pattern,
+            anti_alias: true,
+            ..Default::default()
+        };
+        self.pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+
     pub fn fill_horizontal_gradient(&mut self, rect: Rect, left: Color, right: Color) {
         if rect.width <= 0 || rect.height <= 0 {
             return;
@@ -737,6 +820,25 @@ mod tests {
         canvas.save_png(&path).unwrap();
         assert!(std::fs::metadata(&path).unwrap().len() > 100);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn draws_a_cover_image_inside_a_rounded_rect() {
+        let mut canvas = Canvas::new(160, 120).unwrap();
+        canvas.clear(Color::BLACK);
+        let image = Image::from_rgba(
+            2,
+            2,
+            vec![
+                255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+            ],
+        )
+        .unwrap();
+        assert_eq!((image.width(), image.height()), (2, 2));
+        canvas.draw_image_cover(Rect::new(10, 10, 140, 100), 8.0, &image);
+        let index = ((60 * 160 + 80) * 4) as usize;
+        assert_eq!(&canvas.pixels()[index..index + 4], &[255, 0, 0, 255]);
+        assert!(Image::from_rgba(2, 2, vec![0; 3]).is_err());
     }
 
     #[test]

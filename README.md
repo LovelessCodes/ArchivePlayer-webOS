@@ -48,7 +48,7 @@ deterministic screenshot mode that runs without a display.
 | Library search over the live catalogue | Done |
 | Progress every 15 s, on pause, on Back, and at completion | Done (host loop) |
 | Archive.org search and "add to library" | Not yet |
-| Remote poster image decoding | Not yet (procedural artwork) |
+| Remote poster decoding | Done (portrait posters; procedural fallback) |
 | mDNS `_archiveplayer._tcp` discovery | Interface only |
 | GLES2 renderer and `com.webos.media` playback | Not yet |
 | `.ipk` packaging and device install | Not yet |
@@ -166,7 +166,7 @@ silicon) or an **arm64** Linux host, install the NDK and the
    MP4 through `com.webos.media`.
 2. Add the webOS GLES2 backend and `com.webos.media` player, keeping the same
    screen state and draw calls.
-3. Poster image decoding and Archive.org search/add-to-library.
+3. Archive.org search and add-to-library; wide backdrop artwork.
 4. mDNS discovery, Homebrew manifest, unsigned `.ipk` release.
 
 See [docs/architecture.md](docs/architecture.md) for the design and

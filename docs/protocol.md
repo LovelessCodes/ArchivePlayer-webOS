@@ -80,6 +80,14 @@ Use the `fileName` from `playbackPlan`, not the title. For a series episode send
 `itemCompleted: false`; the server records the episode and leaves the series
 open. Progress always wins over a guessed duration: use the plan length.
 
+## Artwork
+
+The server returns absolute `thumbnailUrl`/`tmdbPosterUrl` values. The client
+fetches them directly from the public host, not through the server API. Private
+and loopback hosts are refused, responses are capped at 8 MiB, and only
+portrait images at least 240 px wide replace the procedural artwork. A failed
+download or decode is silent: the fallback stays on screen.
+
 ## Failure mapping
 
 | Server response | Client action |

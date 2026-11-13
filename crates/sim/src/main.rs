@@ -4,6 +4,7 @@
 //! through SDL2. `--all` writes deterministic screenshots without opening a
 //! window, which is useful in CI and on headless machines.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -255,12 +256,17 @@ fn write_live_screenshot(
     let live = LiveClient::start(target, session_path);
     let deadline = Instant::now() + Duration::from_secs(12);
     let mut loaded_details = false;
+    let mut library_seen: Option<Instant> = None;
 
     while Instant::now() < deadline {
         for event in live.events() {
+            if let LiveEvent::Library(response) = &event {
+                queue_posters(&live, response, &app.library);
+            }
             apply_live_event(&mut app, event);
         }
         if screen != Screen::Pair && !app.library.items.is_empty() {
+            library_seen.get_or_insert_with(Instant::now);
             if !loaded_details && matches!(screen, Screen::Detail | Screen::Player) {
                 let identifier = app.library.item(0).identifier.clone();
                 live.send(LiveCommand::LoadDetails(identifier));
@@ -273,7 +279,11 @@ fn write_live_screenshot(
                 if !app.library.item(0).episodes.is_empty() {
                     break;
                 }
-            } else if screen == Screen::Home && app.screen == Screen::Home {
+            } else if screen == Screen::Home
+                && app.screen == Screen::Home
+                && (app.library.items.iter().any(|item| item.poster.is_some())
+                    || library_seen.is_some_and(|seen| seen.elapsed() > Duration::from_secs(3)))
+            {
                 break;
             }
         }
@@ -459,6 +469,9 @@ fn run_window_app(mut app: App, live: Option<LiveClient>) -> Result<(), String> 
 
         if let Some(live) = &live {
             for event in live.events() {
+                if let LiveEvent::Library(response) = &event {
+                    queue_posters(live, response, &app.library);
+                }
                 apply_live_event(&mut app, event);
             }
         }
@@ -481,6 +494,34 @@ fn run_window_app(mut app: App, live: Option<LiveClient>) -> Result<(), String> 
     }
 
     Ok(())
+}
+
+fn queue_posters(
+    live: &LiveClient,
+    response: &archiveplayer_tv_protocol::LibraryResponse,
+    catalog: &Catalog,
+) {
+    let mut seen = HashSet::new();
+    for group in &response.categories {
+        for item in &group.items {
+            if !seen.insert(item.identifier.clone()) {
+                continue;
+            }
+            if catalog
+                .index_of(&item.identifier)
+                .is_some_and(|index| catalog.item(index).poster.is_some())
+            {
+                continue;
+            }
+            if let Some(url) = item
+                .tmdb_poster_url
+                .clone()
+                .or_else(|| item.thumbnail_url.clone())
+            {
+                live.load_poster(item.identifier.clone(), url);
+            }
+        }
+    }
 }
 
 fn observe_progress(tracker: &mut ProgressTracker, app: &App, live: &LiveClient) {
@@ -628,6 +669,9 @@ fn apply_live_event(app: &mut App, event: LiveEvent) {
                 }
                 app.show_toast(reason);
             }
+        }
+        LiveEvent::Poster { identifier, image } => {
+            app.library.set_poster(&identifier, image);
         }
         LiveEvent::Error(message) => app.show_toast(message),
     }

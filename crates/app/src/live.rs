@@ -6,17 +6,21 @@
 //! webOS shell; only the renderer and the input source differ.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use archiveplayer_tv_api::{
-    connect_target, ApiClient, ApiError, ConnectedServer, ServerTarget, StoredSession,
+    connect_target, fetch_image_bytes, ApiClient, ApiError, ConnectedServer, ServerTarget,
+    StoredSession,
 };
+use archiveplayer_tv_gfx::Image;
 use archiveplayer_tv_platform::{FileSecretStore, SecretStore};
 use archiveplayer_tv_protocol::{CompletedRequest, LibraryResponse, MediaDetails, ProgressRequest};
 
 use crate::pairing::{PairingFlow, PairingPoll};
+use crate::poster::decode_poster;
 
 const CLIENT_NAME: &str = "ArchivePlayer TV";
 const DEVICE_NAME: &str = "webOS TV";
@@ -51,6 +55,10 @@ pub enum LiveEvent {
     PairingStatus(PairingView),
     Library(LibraryResponse),
     Details(Box<MediaDetails>),
+    Poster {
+        identifier: String,
+        image: Image,
+    },
     Error(String),
 }
 
@@ -77,12 +85,80 @@ pub struct LiveClient {
     commands: Sender<LiveCommand>,
     events: Receiver<LiveEvent>,
     worker: Option<JoinHandle<()>>,
+    posters: PosterQueue,
+}
+
+struct PosterRequest {
+    identifier: String,
+    url: String,
+}
+
+/// Two download/decode threads keep slow Archive.org thumbnails from starving
+/// each other while leaving the API worker free for pairing and playback.
+struct PosterQueue {
+    senders: Vec<Sender<PosterRequest>>,
+    next: AtomicUsize,
+    workers: Vec<JoinHandle<()>>,
+}
+
+impl PosterQueue {
+    fn start(events: Sender<LiveEvent>) -> Self {
+        let mut senders = Vec::new();
+        let mut workers = Vec::new();
+        for index in 0..2 {
+            let (sender, receiver) = mpsc::channel::<PosterRequest>();
+            senders.push(sender);
+            let events = events.clone();
+            workers.push(
+                thread::Builder::new()
+                    .name(format!("archiveplayer-poster-{index}"))
+                    .spawn(move || {
+                        while let Ok(request) = receiver.recv() {
+                            let Ok(bytes) = fetch_image_bytes(&request.url) else {
+                                continue;
+                            };
+                            let Ok(image) = decode_poster(&bytes) else {
+                                continue;
+                            };
+                            let _ = events.send(LiveEvent::Poster {
+                                identifier: request.identifier,
+                                image,
+                            });
+                        }
+                    })
+                    .expect("the poster worker thread should start"),
+            );
+        }
+        Self {
+            senders,
+            next: AtomicUsize::new(0),
+            workers,
+        }
+    }
+
+    fn enqueue(&self, identifier: String, url: String) {
+        if self.senders.is_empty() {
+            return;
+        }
+        let index = self.next.fetch_add(1, Ordering::Relaxed) % self.senders.len();
+        let _ = self.senders[index].send(PosterRequest { identifier, url });
+    }
+}
+
+impl Drop for PosterQueue {
+    fn drop(&mut self) {
+        self.senders.clear();
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
+    }
 }
 
 impl LiveClient {
     pub fn start(target: ServerTarget, session_path: PathBuf) -> Self {
         let (command_tx, command_rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
+        let posters = PosterQueue::start(event_tx.clone());
         let worker = thread::Builder::new()
             .name("archiveplayer-live".into())
             .spawn(move || Worker::new(target, session_path, event_tx).run(command_rx))
@@ -91,11 +167,18 @@ impl LiveClient {
             commands: command_tx,
             events: event_rx,
             worker: Some(worker),
+            posters,
         }
     }
 
     pub fn send(&self, command: LiveCommand) {
         let _ = self.commands.send(command);
+    }
+
+    /// Queue artwork for a title. Failures fall back to procedural artwork, so
+    /// the UI is never blocked or emptied by a poster.
+    pub fn load_poster(&self, identifier: String, url: String) {
+        self.posters.enqueue(identifier, url);
     }
 
     /// Drain events without blocking the render loop.
@@ -399,6 +482,11 @@ mod tests {
             commands: command_tx,
             events: event_rx,
             worker: None,
+            posters: PosterQueue {
+                senders: Vec::new(),
+                next: AtomicUsize::new(0),
+                workers: Vec::new(),
+            },
         };
         event_tx.send(LiveEvent::Status("ready".into())).unwrap();
         let events = client.events();

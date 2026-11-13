@@ -1864,19 +1864,23 @@ fn draw_hero(canvas: &mut Canvas, rect: Rect, poster: Rect, item: &MediaItem, li
 }
 
 fn draw_poster(canvas: &mut Canvas, rect: Rect, item: &MediaItem, show_title: bool) {
-    canvas.fill_round_vertical_gradient(rect, 16.0, item.palette.0, item.palette.1);
-    draw_art_shapes(canvas, rect, item);
-    let initial = item.title.chars().next().unwrap_or('A');
-    let initial_size = rect.width as f32 * 0.72;
-    text(
-        canvas,
-        &initial.to_string(),
-        rect.x + 20,
-        (rect.y as f32 + rect.height as f32 * 0.57) as i32,
-        initial_size,
-        item.accent.with_alpha(34),
-        FontWeight::Bold,
-    );
+    if let Some(poster) = &item.poster {
+        canvas.draw_image_cover(rect, 16.0, poster);
+    } else {
+        canvas.fill_round_vertical_gradient(rect, 16.0, item.palette.0, item.palette.1);
+        draw_art_shapes(canvas, rect, item);
+        let initial = item.title.chars().next().unwrap_or('A');
+        let initial_size = rect.width as f32 * 0.72;
+        text(
+            canvas,
+            &initial.to_string(),
+            rect.x + 20,
+            (rect.y as f32 + rect.height as f32 * 0.57) as i32,
+            initial_size,
+            item.accent.with_alpha(34),
+            FontWeight::Bold,
+        );
+    }
 
     canvas.fill_round_vertical_gradient(
         rect,
@@ -1980,8 +1984,12 @@ fn draw_landscape(
     show_resume: bool,
     focused: bool,
 ) {
-    canvas.fill_round_vertical_gradient(rect, 14.0, item.palette.0, item.palette.1);
-    draw_art_shapes(canvas, rect, item);
+    if let Some(poster) = &item.poster {
+        canvas.draw_image_cover(rect, 14.0, poster);
+    } else {
+        canvas.fill_round_vertical_gradient(rect, 14.0, item.palette.0, item.palette.1);
+        draw_art_shapes(canvas, rect, item);
+    }
     canvas.fill_round_vertical_gradient(
         rect,
         14.0,
