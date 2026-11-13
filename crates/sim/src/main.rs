@@ -7,8 +7,11 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use archiveplayer_tv_api::ServerTarget;
 use archiveplayer_tv_gfx::Canvas;
+use archiveplayer_tv_platform::{FileSecretStore, SecretStore};
 use archiveplayer_tv_ui::Screen;
+use archiveplayer_webos::pairing::{PairingFlow, PairingPoll};
 use archiveplayer_webos::render;
 use archiveplayer_webos::state::App;
 use sdl2::event::Event;
@@ -25,6 +28,18 @@ fn main() -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         return Ok(());
+    }
+
+    if let Some(index) = args.iter().position(|arg| arg == "--pair") {
+        let url = args
+            .get(index + 1)
+            .ok_or_else(|| "--pair needs a server URL".to_string())?;
+        let session_path = args
+            .iter()
+            .position(|arg| arg == "--session")
+            .and_then(|position| args.get(position + 1))
+            .map(PathBuf::from);
+        return pair_in_terminal(url, session_path);
     }
 
     if let Some(index) = args.iter().position(|arg| arg == "--all") {
@@ -59,6 +74,7 @@ fn print_help() {
     println!("  cargo run -p archiveplayer-webos-sim");
     println!("  cargo run -p archiveplayer-webos-sim -- --screenshot out.png --screen home");
     println!("  cargo run -p archiveplayer-webos-sim -- --all docs/screenshots");
+    println!("  cargo run -p archiveplayer-webos-sim -- --pair http://192.168.1.20:8080");
     println!();
     println!("Keys: arrows move, Enter activates, Esc goes back, Q quits.");
     println!("      Space toggles playback on the player screen.");
@@ -110,6 +126,57 @@ fn app_for_screen(screen: Screen) -> App {
         }
     }
     app
+}
+
+fn pair_in_terminal(url: &str, session_path: Option<PathBuf>) -> Result<(), String> {
+    let target =
+        ServerTarget::new("lan", "ArchivePlayer", url).map_err(|error| error.to_string())?;
+    let flow = PairingFlow::start(&target, "ArchivePlayer TV", "webOS TV")
+        .map_err(|error| error.to_string())?;
+    println!("Server:   {}", flow.target().lan_url);
+    println!("Code:     {}", flow.user_code());
+    println!("Approve:  {}", flow.verification_uri_complete());
+    println!("Waiting for approval…");
+
+    let deadline = Instant::now() + Duration::from_secs(flow.expires_in_seconds().max(1) as u64);
+    loop {
+        if Instant::now() >= deadline {
+            return Err("pairing code expired".into());
+        }
+        match flow.poll().map_err(|error| error.to_string())? {
+            PairingPoll::Pending => {
+                std::thread::sleep(Duration::from_secs(flow.interval_seconds().max(1) as u64));
+            }
+            PairingPoll::SlowDown {
+                retry_after_seconds,
+            } => {
+                std::thread::sleep(Duration::from_secs(retry_after_seconds.max(1)));
+            }
+            PairingPoll::Denied(message) => return Err(format!("approval denied: {message}")),
+            PairingPoll::Expired(message) => return Err(format!("pairing expired: {message}")),
+            PairingPoll::Approved(session) => {
+                let path = session_path.unwrap_or_else(default_session_path);
+                FileSecretStore::new(&path)
+                    .save(&session)
+                    .map_err(|error| error.to_string())?;
+                println!("Paired as {}", session.user.email);
+                println!("Session:  {}", path.display());
+                return Ok(());
+            }
+        }
+    }
+}
+
+fn default_session_path() -> PathBuf {
+    if let Some(directory) = std::env::var_os("XDG_DATA_HOME") {
+        return PathBuf::from(directory)
+            .join("archiveplayer-webos")
+            .join("session.json");
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join(".local/share/archiveplayer-webos/session.json");
+    }
+    PathBuf::from("archiveplayer-webos-session.json")
 }
 
 fn write_all_screenshots(directory: &Path) -> Result<(), String> {

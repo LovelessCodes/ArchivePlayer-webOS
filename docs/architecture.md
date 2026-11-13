@@ -67,6 +67,19 @@ Ready ── 401 from any endpoint ─────► Pairing (keep the server)
 `StartupState` lives in `crates/app`. A successful pairing writes a
 `StoredSession` and transitions to `Ready`.
 
+## Pairing flow
+
+`app::pairing::PairingFlow` probes the server through `connect_target`, creates a
+device grant with `POST /api/device/start`, and polls
+`POST /api/device/token`. It maps the server's RFC 8628-style errors to
+`Pending`, `SlowDown`, `Denied`, `Expired`, or `Approved`. The approved token is
+persisted through `SecretStore`; `Debug` implementations redact both the device
+code and the bearer token.
+
+The host simulator exposes this as `--pair <url> --session <path>` so the
+exchange can be tested against a real server before the pairing screen is wired
+to a worker thread.
+
 ## Server connection policy
 
 - LAN URL and remote URL are stored separately.

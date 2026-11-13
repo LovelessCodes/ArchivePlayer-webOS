@@ -8,7 +8,9 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+archiveplayer-tv-api = { path = "../api" }
 archiveplayer-tv-gfx = { path = "../gfx" }
+archiveplayer-tv-platform = { path = "../platform" }
 archiveplayer-tv-ui = { path = "../ui" }
 archiveplayer-webos = { path = "../app" }
 sdl2 = "0.37"

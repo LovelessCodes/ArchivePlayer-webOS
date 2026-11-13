@@ -36,7 +36,7 @@ deterministic screenshot mode that runs without a display.
 | Server URL validation (LAN HTTP, public HTTPS) | Done |
 | LAN-first connect with remote fallback only on transport errors | Done |
 | Bearer API client: health, status, library, continue-watching, search, playback | Done |
-| Device pairing start/poll DTOs | Done |
+| Device pairing flow: start, poll, approve, store | Done (terminal) |
 | Playback-plan support (`platform=webos`, `file=...`) | Done |
 | Startup state machine (`Setup → Pairing → Ready → Pairing` on 401) | Done |
 | Token store: private file / memory | Done |
@@ -85,6 +85,18 @@ cargo run -p archiveplayer-webos-sim -- --all docs/screenshots
 cargo run -p archiveplayer-webos-sim -- --screenshot home.png --screen home
 ```
 
+The pairing client can be exercised against a real server before the UI is
+wired to it:
+
+```sh
+cargo run -p archiveplayer-webos-sim -- \
+  --pair http://192.168.1.20:8080 \
+  --session /tmp/archiveplayer-tv-session.json
+```
+
+Approve the printed code in the web app. The resulting session is written with
+mode `0600`; the token is never printed.
+
 Checks:
 
 ```sh
@@ -103,7 +115,9 @@ cargo test --workspace
    `userCode`/QR from the response.
 4. After `POST /api/device/token` returns a token, it stores that token in a
    private app-data file and sends it as
-   `Authorization: Bearer <token>`.
+   `Authorization: Bearer <token>`. `PairingFlow` implements this exchange,
+   including `authorization_pending`, `slow_down`, `access_denied`, and
+   `expired_token`.
 5. Playback calls `/api/playback/{identifier}?platform=webos` and uses
    `playbackPlan`. If `playbackPlan.compatible` is false, the UI explains why
    instead of starting a decode that will fail.

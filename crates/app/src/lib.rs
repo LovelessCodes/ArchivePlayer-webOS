@@ -6,9 +6,11 @@
 
 pub mod demo;
 pub mod layout;
+pub mod pairing;
 pub mod render;
 pub mod state;
 
+pub use pairing::{PairingFlow, PairingPoll};
 pub use state::{Action, App, FocusTarget};
 
 use archiveplayer_tv_api::{ServerTarget, StoredSession};

@@ -76,7 +76,9 @@ dependencies = [
 name = "archiveplayer-webos-sim"
 version = "0.1.0"
 dependencies = [
+ "archiveplayer-tv-api",
  "archiveplayer-tv-gfx",
+ "archiveplayer-tv-platform",
  "archiveplayer-tv-ui",
  "archiveplayer-webos",
  "sdl2",
