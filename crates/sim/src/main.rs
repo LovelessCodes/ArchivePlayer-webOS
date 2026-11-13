@@ -112,6 +112,11 @@ fn run() -> Result<(), String> {
         return write_screenshot(&path, screen);
     }
 
+    #[cfg(all(target_arch = "arm", target_os = "linux"))]
+    if args.is_empty() {
+        return run_tv_default();
+    }
+
     run_window()
 }
 
@@ -220,6 +225,13 @@ fn pair_in_terminal(url: &str, session_path: Option<PathBuf>) -> Result<(), Stri
 }
 
 fn default_session_path() -> PathBuf {
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(directory) = executable.parent() {
+            if directory.join("appinfo.json").is_file() {
+                return directory.join("session.json");
+            }
+        }
+    }
     if let Some(directory) = std::env::var_os("XDG_DATA_HOME") {
         return PathBuf::from(directory)
             .join("archiveplayer-webos")
@@ -544,6 +556,52 @@ fn display_server(url: &str) -> String {
     url.trim_end_matches('/').to_string()
 }
 
+#[cfg(all(target_arch = "arm", target_os = "linux"))]
+fn run_tv_default() -> Result<(), String> {
+    let path = default_session_path();
+    println!("Looking for ArchivePlayer servers on this network…");
+    let servers = match discover_servers(Duration::from_secs(5)) {
+        Ok(servers) => servers,
+        Err(error) => {
+            eprintln!("Discovery failed: {error}");
+            return run_window();
+        }
+    };
+    if servers.is_empty() {
+        eprintln!("No ArchivePlayer server answered mDNS; showing the demo library.");
+        return run_window();
+    }
+    let server = preferred_server(&servers, &path)
+        .ok_or_else(|| "discovery returned no usable server".to_string())?;
+    println!(
+        "Connecting to {} at {}",
+        server.name,
+        display_server(&server.lan_url)
+    );
+    let target = target_from_server(server)?;
+    run_live_window_target(target, path)
+}
+
+/// Pick the saved server when it is still advertised, otherwise the first by
+/// name. A TV has no keyboard at startup, so a multi-server LAN must not turn
+/// into an unanswerable prompt.
+#[cfg(all(target_arch = "arm", target_os = "linux"))]
+fn preferred_server<'a>(
+    servers: &'a [DiscoveredServer],
+    session_path: &Path,
+) -> Option<&'a DiscoveredServer> {
+    if let Ok(Some(session)) = FileSecretStore::new(session_path).load() {
+        if session.target.id.len() >= 12 {
+            if let Some(server) = servers.iter().find(|server| server.id == session.target.id) {
+                return Some(server);
+            }
+        }
+    }
+    servers
+        .iter()
+        .min_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)))
+}
+
 fn run_window() -> Result<(), String> {
     run_window_app(App::demo(), None)
 }
@@ -561,15 +619,23 @@ fn run_live_window_target(target: ServerTarget, session_path: PathBuf) -> Result
 }
 
 fn run_window_app(mut app: App, live: Option<LiveClient>) -> Result<(), String> {
+    // LG's SDL fork needs this before SDL_Init to translate the remote's Back
+    // key into a normal SDL keyboard event. Other SDL builds ignore the hint.
+    sdl2::hint::set("SDL_WEBOS_ACCESS_POLICY_KEYS_BACK", "1");
     let sdl = sdl2::init()?;
     let video = sdl.video()?;
-    let window = video
+    #[allow(unused_mut)]
+    let mut window = video
         .window("ArchivePlayer — webOS native preview", 1280, 720)
         .position_centered()
         .resizable()
         .allow_highdpi()
         .build()
         .map_err(|error| error.to_string())?;
+    #[cfg(all(target_arch = "arm", target_os = "linux"))]
+    if let Err(error) = window.set_fullscreen(FullscreenType::Desktop) {
+        eprintln!("fullscreen request failed: {error}");
+    }
     let mut sdl_canvas = window
         .into_canvas()
         .build()

@@ -84,6 +84,7 @@ dependencies = [
  "archiveplayer-tv-protocol",
  "archiveplayer-tv-ui",
  "archiveplayer-webos",
+ "cc",
  "sdl2",
  "tempfile",
 ]

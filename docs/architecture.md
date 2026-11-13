@@ -227,3 +227,18 @@ set; if a file is not directly playable the plan should say so.
 - `ApiError::ApiVersion` is a terminal setup error with a clear message.
 - A corrupt stored session is treated as "not paired" rather than crashing the
   app. A failed library refresh keeps the last good catalogue on screen.
+
+## Packaging and releases
+
+`crates/sim` is also the native binary: the same SDL2 event loop and 1920×1080
+canvas run on the host and on the TV. For ARM it builds as a PIE against the
+webOS glibc 2.12 sysroot, adds a small `getauxval` compatibility function, and
+starts fullscreen. With no arguments it discovers a server over mDNS, prefers a
+saved stable ID, and otherwise opens the first advertised server; if none
+answers it falls back to the demo catalogue.
+
+`scripts/package.py` turns that ELF plus `pkg/appinfo.json` into a deterministic
+`.ipk` and a Homebrew manifest. The manifest's `ipkUrl` is relative to itself so
+`releases/latest/download/<id>.manifest.json` stays valid. `webos-v*` tags run
+the release workflow; the tag version, package control file, manifest, and
+`appinfo.json` are checked for agreement before publishing.

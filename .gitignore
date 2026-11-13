@@ -3,3 +3,5 @@
 /pkg/archiveplayer-webos
 *.log
 .DS_Store
+/dist
+/build

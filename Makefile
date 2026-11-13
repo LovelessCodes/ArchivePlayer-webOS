@@ -1,6 +1,6 @@
 CARGO ?= cargo
 
-.PHONY: check fmt clippy test run sim screenshots ipk
+.PHONY: check fmt clippy test run sim screenshots arm ipk
 
 check: fmt clippy test
 
@@ -21,9 +21,11 @@ sim:
 screenshots:
 	$(CARGO) run -p archiveplayer-webos-sim -- --all docs/screenshots
 
-# The native package step needs the webOS NDK and a cross-built binary. Keep the
-# failure explicit instead of producing a host x86_64 .ipk that cannot run.
-ipk:
-	@echo "The .ipk target is not implemented yet."
-	@echo "See docs/build.md; it requires the webOS NDK on macOS or arm64 Linux."
-	@exit 1
+# Native package build. The openlgtv Buildroot NDK is an x86_64 Linux
+# toolchain, so this works on the same host that runs the simulator.
+WEBOS_NDK ?= $(HOME)/webos-ndk/arm-webos-linux-gnueabi_sdk-buildroot
+arm:
+	WEBOS_NDK="$(WEBOS_NDK)" scripts/build-arm.sh
+
+ipk: arm
+	python3 scripts/package.py --strip "$(WEBOS_NDK)/bin/arm-webos-linux-gnueabi-strip"

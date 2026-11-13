@@ -6,12 +6,12 @@ talks to the server over the documented HTTP API, and (in the next milestone)
 hands Archive.org MP4s to the television's own media pipeline. No Chromium, no
 WebView, no JavaScript runtime.
 
-> **Status: host preview with live server mode.** The native UI, focus model,
-> QR pairing screen, API worker, live library/detail loading, Archive.org search,
-> add-to-library, mDNS server discovery, and remote poster/backdrop artwork run
-> on the host today. The
-> webOS GLES2 backend and `com.webos.media` playback path still need a hardware
-> spike, and this repository is not yet installable on a television.
+> **Status: unsigned webOS preview.** The native UI, focus model, QR pairing,
+> API worker, live library/detail loading, Archive.org search, add-to-library,
+> mDNS discovery, and remote poster/backdrop artwork are packaged as an
+> unsigned `.ipk` for webOS 5+. Video playback still needs the
+> `com.webos.media` hardware spike, so this release is a UI and connectivity
+> preview rather than a complete player.
 
 ![ArchivePlayer webOS home screen](docs/screenshots/home.png)
 
@@ -51,8 +51,9 @@ deterministic screenshot mode that runs without a display.
 | Progress every 15 s, on pause, on Back, and at completion | Done (host loop) |
 | Remote poster and wide backdrop decoding | Done (portrait posters, 16:9 backdrops, procedural fallback) |
 | mDNS `_archiveplayer._tcp` discovery | Done (host + TXT address hint) |
+| ARMv7 cross-build with the webOS ABI | Done (openlgtv Buildroot NDK) |
+| Unsigned `.ipk` + Homebrew manifest | Done (`make ipk`, `webos-v*` release) |
 | GLES2 renderer and `com.webos.media` playback | Not yet |
-| `.ipk` packaging and device install | Not yet |
 
 ## Layout
 
@@ -176,12 +177,48 @@ cargo test --workspace
 The full contract is in the server's
 [docs/tv-clients.md](https://github.com/LovelessCodes/ArchivePlayer/blob/main/docs/tv-clients.md).
 
+## Install the native preview
+
+Download the `.ipk` from the
+[latest webOS release](https://github.com/LovelessCodes/ArchivePlayer-webOS/releases/latest),
+verify it against `SHA256SUMS.txt`, then install it through Developer Mode or
+the Homebrew Channel. With the webOS CLI:
+
+```sh
+ares-install -d <tv> codes.loveless.archiveplayer_0.1.0_arm.ipk
+ares-launch -d <tv> codes.loveless.archiveplayer
+```
+
+The package is unsigned and is not submitted to LG Seller Lounge (native apps
+cannot be). On launch it browses `_archiveplayer._tcp.local` for five seconds,
+connects to the saved server when it is still advertised, and otherwise opens
+the first server by name. If nothing answers it falls back to the demo library.
+A paired session is stored beside `appinfo.json` (mode `0600`) so it survives a
+relaunch.
+
+The Homebrew Channel reads
+`https://github.com/LovelessCodes/ArchivePlayer-webOS/releases/latest/download/codes.loveless.archiveplayer.manifest.json`.
+The manifest names the `.ipk` relative to itself, so it keeps working across
+releases. The package requests no root and declares webOS 5.0 or newer.
+
 ## Building the native package
 
-The official webOS NDK has no x86_64 Linux build. Use macOS (Intel or Apple
-silicon) or an **arm64** Linux host, install the NDK and the
-`armv7-unknown-linux-gnueabi` Rust target, then set `WEBOS_NDK`. See
-[docs/build.md](docs/build.md) for the toolchain, linker, and `.ipk` steps.
+The official webOS NDK has no x86_64 Linux build. This project uses the
+[openlgtv Buildroot NDK](https://github.com/openlgtv/buildroot-nc4), whose
+x86_64 release includes the webOS sysroot and SDL2, so the package can be built
+on the same Linux host as the simulator:
+
+```sh
+rustup target add armv7-unknown-linux-gnueabi
+export WEBOS_NDK=$HOME/webos-ndk/arm-webos-linux-gnueabi_sdk-buildroot
+make ipk
+```
+
+`make ipk` cross-builds the SDL2 binary, strips a staged copy, writes
+`dist/codes.loveless.archiveplayer_0.1.0_arm.ipk`, its SHA-256 file, and
+`codes.loveless.archiveplayer.manifest.json`. The archive is deterministic:
+the same commit and toolchain produce the same bytes. See
+[docs/build.md](docs/build.md) for the layout and release process.
 
 ## Roadmap
 
@@ -191,7 +228,8 @@ silicon) or an **arm64** Linux host, install the NDK and the
 2. Add the webOS GLES2 backend and `com.webos.media` player, keeping the same
    screen state and draw calls.
 3. Result pagination and an artwork memory cap for very large libraries.
-4. Homebrew manifest and an unsigned `.ipk` release.
+4. Submit the Homebrew manifest to the central webOS Homebrew repository once
+   playback is ready.
 
 See [docs/architecture.md](docs/architecture.md) for the design and
 [docs/protocol.md](docs/protocol.md) for the API surface this client uses.
