@@ -11,9 +11,32 @@ fn serve_once(status: &str, body: &str, headers: &str) -> (String, JoinHandle<St
     let headers = headers.to_string();
     let handle = thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        let mut request = vec![0_u8; 16 * 1024];
-        let length = stream.read(&mut request).unwrap();
-        let request = String::from_utf8_lossy(&request[..length]).to_string();
+        let mut data = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        let header_end = loop {
+            let read = stream.read(&mut buffer).unwrap();
+            if read == 0 {
+                break data.len();
+            }
+            data.extend_from_slice(&buffer[..read]);
+            if let Some(position) = data.windows(4).position(|window| window == b"\r\n\r\n") {
+                break position + 4;
+            }
+        };
+        let request_headers = String::from_utf8_lossy(&data[..header_end]).to_ascii_lowercase();
+        let content_length = request_headers
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        while data.len() < header_end + content_length {
+            let read = stream.read(&mut buffer).unwrap();
+            if read == 0 {
+                break;
+            }
+            data.extend_from_slice(&buffer[..read]);
+        }
+        let request = String::from_utf8_lossy(&data).to_string();
         let response = format!(
             "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{headers}\r\n{body}",
             body.len()
@@ -111,6 +134,49 @@ fn encodes_playback_platform_and_file() {
     assert!(request.starts_with("GET /api/playback/movie%20id?"));
     assert!(request.contains("platform=webos"));
     assert!(request.contains("file=episode+one.mp4"));
+}
+
+#[test]
+fn sends_progress_as_a_put_with_camel_case_fields() {
+    let (base, server) = serve_once("204 No Content", "", "");
+    let client = ApiClient::new(&base)
+        .unwrap()
+        .with_token(Some("token".into()));
+    client
+        .save_progress(
+            "movie id",
+            &archiveplayer_tv_protocol::ProgressRequest {
+                file_name: "movie.mp4".into(),
+                position_seconds: 42,
+                duration_seconds: 600,
+            },
+        )
+        .unwrap();
+    let request = server.join().unwrap();
+    assert!(request.starts_with("PUT /api/playback/movie%20id/progress HTTP/1.1"));
+    assert!(request.contains("\"fileName\":\"movie.mp4\""));
+    assert!(request.contains("\"positionSeconds\":42"));
+    assert!(request.contains("\"durationSeconds\":600"));
+}
+
+#[test]
+fn marks_completion_with_the_item_flag() {
+    let (base, server) = serve_once("204 No Content", "", "");
+    let client = ApiClient::new(&base)
+        .unwrap()
+        .with_token(Some("token".into()));
+    client
+        .mark_completed(
+            "movie",
+            &archiveplayer_tv_protocol::CompletedRequest {
+                file_name: "movie.mp4".into(),
+                item_completed: true,
+            },
+        )
+        .unwrap();
+    let request = server.join().unwrap();
+    assert!(request.starts_with("POST /api/playback/movie/completed HTTP/1.1"));
+    assert!(request.contains("\"itemCompleted\":true"));
 }
 
 fn closed_local_url() -> String {

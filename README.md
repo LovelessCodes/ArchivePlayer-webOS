@@ -46,6 +46,7 @@ deterministic screenshot mode that runs without a display.
 | Live server library, details, and settings | Done (host mode) |
 | Live pairing screen: code, QR, poll, token store | Done |
 | Library search over the live catalogue | Done |
+| Progress every 15 s, on pause, on Back, and at completion | Done (host loop) |
 | Archive.org search and "add to library" | Not yet |
 | Remote poster image decoding | Not yet (procedural artwork) |
 | mDNS `_archiveplayer._tcp` discovery | Interface only |
@@ -110,6 +111,10 @@ cargo run -p archiveplayer-webos-sim -- \
 Use `--live-screen detail` or `--live-screen settings` to capture another
 screen. The session is written with mode `0600`; the token is never printed.
 
+In the live window, opening a title and pressing Play reports progress every
+15 seconds, immediately on pause, Back, or quit, and marks the file complete
+near the end. The same tracker will drive the webOS shell.
+
 The pairing exchange can also be tested without the window:
 
 ```sh
@@ -161,9 +166,8 @@ silicon) or an **arm64** Linux host, install the NDK and the
    MP4 through `com.webos.media`.
 2. Add the webOS GLES2 backend and `com.webos.media` player, keeping the same
    screen state and draw calls.
-3. Progress every 15 s, on pause, and on stop; completed at end.
-4. Poster image decoding and Archive.org search/add-to-library.
-5. mDNS discovery, Homebrew manifest, unsigned `.ipk` release.
+3. Poster image decoding and Archive.org search/add-to-library.
+4. mDNS discovery, Homebrew manifest, unsigned `.ipk` release.
 
 See [docs/architecture.md](docs/architecture.md) for the design and
 [docs/protocol.md](docs/protocol.md) for the API surface this client uses.

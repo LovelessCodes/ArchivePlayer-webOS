@@ -64,6 +64,22 @@ expected to have. `videoFileUrls` also carries `format`, `mimeType`, `sizeBytes`
 `durationSeconds` on `MediaDetails` is the saved player duration, not the
 Archive.org file length; use `playbackPlan.lengthSeconds` before playback.
 
+## Progress payloads
+
+```json
+PUT /api/playback/night_of_the_living_dead/progress
+{ "fileName": "night.mp4", "positionSeconds": 1284, "durationSeconds": 5760 }
+```
+
+```json
+POST /api/playback/night_of_the_living_dead/completed
+{ "fileName": "night.mp4", "itemCompleted": true }
+```
+
+Use the `fileName` from `playbackPlan`, not the title. For a series episode send
+`itemCompleted: false`; the server records the episode and leaves the series
+open. Progress always wins over a guessed duration: use the plan length.
+
 ## Failure mapping
 
 | Server response | Client action |

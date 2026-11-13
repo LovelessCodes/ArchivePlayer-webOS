@@ -14,6 +14,7 @@ use archiveplayer_tv_ui::Screen;
 use archiveplayer_webos::catalog::Catalog;
 use archiveplayer_webos::live::{LiveClient, LiveCommand, LiveEvent, PairingView};
 use archiveplayer_webos::pairing::{PairingFlow, PairingPoll};
+use archiveplayer_webos::progress::{target_for, ProgressAction, ProgressTracker};
 use archiveplayer_webos::render;
 use archiveplayer_webos::state::{App, PairingStatus};
 use sdl2::event::Event;
@@ -355,20 +356,39 @@ fn run_window_app(mut app: App, live: Option<LiveClient>) -> Result<(), String> 
     let mut frame_canvas = Canvas::new(WIDTH, HEIGHT)?;
     let mut last = Instant::now();
     let mut was_editing = false;
+    let mut progress = ProgressTracker::new();
 
     'running: loop {
         for event in event_pump.poll_iter() {
             match event {
-                Event::Quit { .. } => break 'running,
+                Event::Quit { .. } => {
+                    if let Some(live) = &live {
+                        flush_progress(&mut progress, &app, live);
+                    }
+                    break 'running;
+                }
                 Event::KeyDown {
                     keycode: Some(key), ..
                 } => match key {
-                    Keycode::Q if !app.search_editing => break 'running,
-                    Keycode::Escape => app.back(),
+                    Keycode::Q if !app.search_editing => {
+                        if let Some(live) = &live {
+                            flush_progress(&mut progress, &app, live);
+                        }
+                        break 'running;
+                    }
+                    Keycode::Escape => {
+                        if let Some(live) = &live {
+                            flush_progress(&mut progress, &app, live);
+                        }
+                        app.back();
+                    }
                     Keycode::Backspace => {
                         if app.search_editing {
                             app.on_backspace();
                         } else {
+                            if let Some(live) = &live {
+                                flush_progress(&mut progress, &app, live);
+                            }
                             app.back();
                         }
                     }
@@ -377,13 +397,25 @@ fn run_window_app(mut app: App, live: Option<LiveClient>) -> Result<(), String> 
                     Keycode::Left => app.move_focus(archiveplayer_tv_ui::FocusMove::Left),
                     Keycode::Right => app.move_focus(archiveplayer_tv_ui::FocusMove::Right),
                     Keycode::Return | Keycode::KpEnter => {
+                        if let Some(live) = &live {
+                            flush_progress(&mut progress, &app, live);
+                        }
                         let action = app.activate();
+                        if matches!(action, archiveplayer_webos::state::Action::Play(_)) {
+                            progress.reset();
+                        }
                         if let Some(live) = &live {
                             dispatch_action(live, &app, action);
                         }
                     }
                     Keycode::Space => {
+                        if let Some(live) = &live {
+                            flush_progress(&mut progress, &app, live);
+                        }
                         let action = app.activate();
+                        if matches!(action, archiveplayer_webos::state::Action::Play(_)) {
+                            progress.reset();
+                        }
                         if let Some(live) = &live {
                             dispatch_action(live, &app, action);
                         }
@@ -432,9 +464,12 @@ fn run_window_app(mut app: App, live: Option<LiveClient>) -> Result<(), String> 
         }
 
         let now = Instant::now();
-        let delta = now.duration_since(last).as_secs_f64().min(0.1);
+        let delta = now.duration_since(last).as_secs_f64().min(0.5);
         last = now;
         app.tick(delta);
+        if let Some(live) = &live {
+            observe_progress(&mut progress, &app, live);
+        }
         render::render(&app, &mut frame_canvas);
         upload_texture(&mut texture, &frame_canvas)?;
         sdl_canvas.clear();
@@ -446,6 +481,63 @@ fn run_window_app(mut app: App, live: Option<LiveClient>) -> Result<(), String> 
     }
 
     Ok(())
+}
+
+fn observe_progress(tracker: &mut ProgressTracker, app: &App, live: &LiveClient) {
+    if !app.paired || app.screen != Screen::Player {
+        return;
+    }
+    let Some(target) = target_for(app.library.item(app.selected)) else {
+        return;
+    };
+    let action = tracker.observe(
+        Some(&target),
+        app.player_position.round() as i64,
+        app.player_duration.round() as i64,
+        app.player_playing,
+        Instant::now(),
+    );
+    if let Some(action) = action {
+        send_progress(live, action);
+    }
+}
+
+fn flush_progress(tracker: &mut ProgressTracker, app: &App, live: &LiveClient) {
+    if !app.paired || app.screen != Screen::Player {
+        return;
+    }
+    let Some(target) = target_for(app.library.item(app.selected)) else {
+        return;
+    };
+    let action = tracker.flush(
+        &target,
+        app.player_position.round() as i64,
+        app.player_duration.round() as i64,
+        Instant::now(),
+    );
+    if let Some(action) = action {
+        send_progress(live, action);
+    }
+}
+
+fn send_progress(live: &LiveClient, action: ProgressAction) {
+    match action {
+        ProgressAction::Save {
+            target,
+            position_seconds,
+            duration_seconds,
+        } => live.send(LiveCommand::SaveProgress {
+            identifier: target.identifier,
+            file_name: target.file_name,
+            position_seconds,
+            duration_seconds,
+        }),
+        ProgressAction::Completed { target } => live.send(LiveCommand::MarkCompleted {
+            identifier: target.identifier,
+            file_name: target.file_name,
+            item_completed: target.item_completed,
+        }),
+    }
 }
 
 fn dispatch_action(live: &LiveClient, app: &App, action: archiveplayer_webos::state::Action) {
@@ -517,6 +609,17 @@ fn apply_live_event(app: &mut App, event: LiveEvent) {
                 });
             if app.library.apply_details(&details) {
                 app.show_toast(format!("Loaded {}", details.title));
+            }
+            if app.screen == Screen::Player {
+                if let Some(seconds) = details
+                    .playback_plan
+                    .as_ref()
+                    .and_then(|plan| plan.length_seconds)
+                    .filter(|seconds| *seconds > 0.0)
+                {
+                    app.player_duration = seconds.max(1.0);
+                    app.player_position = app.player_position.min(app.player_duration);
+                }
             }
             if let Some(reason) = incompatible {
                 if app.screen == Screen::Player {

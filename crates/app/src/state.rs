@@ -448,8 +448,15 @@ impl App {
             let (position, duration) = item
                 .progress
                 .unwrap_or((0, item.runtime_minutes as i64 * 60));
-            self.player_position = position as f64;
-            self.player_duration = duration.max(1) as f64;
+            let plan_duration = item
+                .playback_plan
+                .as_ref()
+                .and_then(|plan| plan.length_seconds)
+                .filter(|seconds| *seconds > 0.0)
+                .map(|seconds| seconds.round() as i64);
+            let duration = plan_duration.unwrap_or(duration).max(1);
+            self.player_position = (position as f64).clamp(0.0, duration as f64);
+            self.player_duration = duration as f64;
             self.player_playing = true;
         }
     }

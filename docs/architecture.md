@@ -107,6 +107,21 @@ only that chip. An empty library renders an explicit empty state.
 to a safe placeholder, so the Detail and Player screens cannot panic if a title
 is removed by the web app during a refresh.
 
+## Progress reporting
+
+`app::progress::ProgressTracker` is a clock-injected policy shared by every
+shell. It arms a timer when a title opens, emits a save every 15 seconds, and
+emits completion once when playback reaches the last three seconds. `flush`
+covers pause, Back, and quit; it does not overwrite an already completed title.
+The tracker resets when the file changes or the same title is played again.
+
+Only a loaded `playbackPlan.fileName` is reportable. A title without a plan is
+skipped rather than guessed, because the server stores progress per file. For a
+movie the completed request sets `itemCompleted: true`; for a series episode it
+stays `false` so the next episode can continue the item. The host simulator
+wires the tracker to `LiveCommand::SaveProgress` and
+`LiveCommand::MarkCompleted`; the webOS shell will use the same seam.
+
 ## Server connection policy
 
 - LAN URL and remote URL are stored separately.

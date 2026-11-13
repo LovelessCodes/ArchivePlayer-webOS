@@ -8,6 +8,7 @@ pub mod catalog;
 pub mod layout;
 pub mod live;
 pub mod pairing;
+pub mod progress;
 pub mod render;
 pub mod state;
 
@@ -200,6 +201,30 @@ mod ui_tests {
         app.search_editing = false;
         app.back();
         assert_eq!(app.screen, Screen::Home);
+    }
+
+    #[test]
+    fn player_uses_the_plan_length_instead_of_the_saved_duration() {
+        let mut app = App::demo();
+        app.selected = 0;
+        app.library.items[0].playback_plan = Some(archiveplayer_tv_protocol::PlaybackPlan {
+            platform: "webos".into(),
+            file_name: "movie.mp4".into(),
+            url: "https://example.test/movie.mp4".into(),
+            mime_type: None,
+            format: None,
+            container: None,
+            video_codec: None,
+            size_bytes: None,
+            length_seconds: Some(1_234.0),
+            width: None,
+            height: None,
+            compatible: true,
+            reason: None,
+        });
+        app.set_screen(Screen::Player);
+        assert_eq!(app.player_duration, 1_234.0);
+        assert!(app.player_position <= app.player_duration);
     }
 
     #[test]
