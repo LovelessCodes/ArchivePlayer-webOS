@@ -29,7 +29,14 @@ use sdl2::video::FullscreenType;
 const WIDTH: u32 = 1920;
 const HEIGHT: u32 = 1080;
 
-fn main() -> Result<(), String> {
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
