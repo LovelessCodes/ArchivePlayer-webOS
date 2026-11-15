@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1 — native app registration
+
+- Ship a native-only `appinfo.json`: drop the web-app `iconColor` and
+  `defaultWindowType` keys, the invalid `media` permission, and relaunch
+  handling. A television that had rebooted rejected the old manifest during
+  SAM launch item creation (`creating_item_fail`) and did not list the app.
+- Reserve 160 MB of memory, matching the working native manifests on webOS 5.
+
 ## 0.2.0 — hardware playback
 
 - Play Archive.org MP4s through `com.webos.media` on an exported SDL window.

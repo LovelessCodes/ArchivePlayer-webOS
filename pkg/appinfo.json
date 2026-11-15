@@ -1,6 +1,6 @@
 {
   "id": "codes.loveless.archiveplayer",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "vendor": "LovelessCodes",
   "type": "native",
   "main": "archiveplayer-webos",
@@ -8,13 +8,9 @@
   "appDescription": "Native ArchivePlayer client for LG webOS",
   "icon": "icon.png",
   "largeIcon": "largeIcon.png",
-  "iconColor": "#0f172a",
   "splashBackground": "splash.png",
   "nativeLifeCycleInterfaceVersion": 2,
-  "handlesRelaunch": true,
+  "handlesRelaunch": false,
   "transparent": true,
-  "defaultWindowType": "fullscreen",
-  "requiredPermissions": [
-    "media"
-  ]
+  "requiredMemory": 160
 }

@@ -102,8 +102,67 @@ the pointers at offset 8 (display) and 12 (surface).
   into a red wash.
 - **No `ldd`, `pidof`, or `killall` on the set.** Use `ps -eo pid,args` and
   `awk`.
+- **A reboot can drop a native app that was launched before it.** On one
+  session the package files were present but `listApps` omitted the app,
+  `getAppInfo` returned `-101`, and SAM logged
+  `APP_LAUNCH_ERR ... creating_item_fail`. Editing the installed
+  `appinfo.json` to a native-only manifest and rebooting restored it. The
+  fields that are gone are the web-app `iconColor` and `defaultWindowType`, the
+  `media` required permission, and relaunch handling; the manifest now sets
+  `handlesRelaunch: false` and `requiredMemory: 160`. The packaged fix is
+  0.2.1. `opkg` never moved the package past `unpacked`, so do not read its
+  status as proof of a usable install.
 - **`appinfo.json` with `"type": "native"` cannot be installed through LG Seller
   Lounge.** Developer Mode and the Homebrew Channel are the distribution path.
+
+## Access when SSH is unavailable
+
+The Developer Mode SSH key is the fastest path, but a reboot can leave port 22
+closed while the television is still on the network. SSAP remains on 3000
+(plain WebSocket) and 3001 (TLS WebSocket). Register with the stored client key,
+then use the normal `ssap://` requests:
+
+```text
+{"type":"register","payload":{"client-key":"..."}}
+{"type":"request","uri":"ssap://com.webos.applicationManager/listApps"}
+{"type":"request","uri":"ssap://com.webos.applicationManager/launch",
+ "payload":{"id":"codes.loveless.archiveplayer"}}
+{"type":"request","uri":"ssap://com.webos.applicationManager/getForegroundAppInfo"}
+```
+
+The app list is the useful check: after the native-only manifest fix the client
+appears as `codes.loveless.archiveplayer | ArchivePlayer | native`. `launch`
+returns `returnValue: true`; the foreground app follows a few seconds later.
+
+`sendSpecialKey` and `sendKeyCode` are **not** in the SSAP allowlist on 5.4.2
+(they return 404), so remote injection is different from the root-shell recipe.
+Ask for a pointer socket, connect to the returned path, and write the same text
+commands the LG remote app uses:
+
+```text
+ssap://com.webos.service.networkinput/getPointerInputSocket
+  -> {"socketPath":"ws://<tv>:3000/resources/<token>/netinput.pointer.sock"}
+
+type:button
+name:RIGHT
+
+type:button
+name:ENTER
+```
+
+One button command per line is enough; the socket closes after the batch. This
+drove Right, Enter, and Back on the real set after SSH was gone. The
+`ssap://com.webos.service.networkinput/controls/play` endpoint also works, but it
+only covers transport keys.
+
+Screenshots still work through
+`ssap://com.webos.service.capture/executeOneShot` with
+`{"path":"/tmp/capture.png","method":"GRAPHIC","width":1920,"height":1080,
+"format":"PNG"}`. They contain the graphics plane only, so the file size is a
+cheap way to see a screen change (the library home was about 308 KB, the player
+overlay about 128 KB, and Back returned the 308 KB home image). Retrieving the
+file itself still needs SSH; SSAP returns the path and byte count, not the
+image.
 
 ## Next hardware checks
 

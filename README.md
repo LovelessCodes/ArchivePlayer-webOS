@@ -25,7 +25,7 @@ deterministic screenshot mode that runs without a display.
   the webOS NDK, an ARMv7 cross toolchain, SDL2, and LG's native service stubs.
 - Its artifact is an unsigned `.ipk` for Developer Mode / Homebrew Channel, not a
   desktop installer or container image.
-- It releases on its own cadence (`webos-v0.2.0`), against the versioned
+- It releases on its own cadence (`webos-v0.2.1`), against the versioned
   `apiVersion` contract rather than the server's release tag.
 - Keeping the client separate makes the native toolchain and the MIT/GPL
   boundary explicit. This repository is a clean-room MIT implementation; see
@@ -186,7 +186,7 @@ verify it against `SHA256SUMS.txt`, then install it through Developer Mode or
 the Homebrew Channel. With the webOS CLI:
 
 ```sh
-ares-install -d <tv> codes.loveless.archiveplayer_0.2.0_arm.ipk
+ares-install -d <tv> codes.loveless.archiveplayer_0.2.1_arm.ipk
 ares-launch -d <tv> codes.loveless.archiveplayer
 ```
 
@@ -216,7 +216,7 @@ make ipk
 ```
 
 `make ipk` cross-builds the SDL2 binary, strips a staged copy, writes
-`dist/codes.loveless.archiveplayer_0.2.0_arm.ipk`, its SHA-256 file, and
+`dist/codes.loveless.archiveplayer_0.2.1_arm.ipk`, its SHA-256 file, and
 `codes.loveless.archiveplayer.manifest.json`. The archive is deterministic:
 the same commit and toolchain produce the same bytes. See
 [docs/build.md](docs/build.md) for the layout and release process.
